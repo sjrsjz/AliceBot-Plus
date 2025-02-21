@@ -1,0 +1,5 @@
+{
+    "tex_path_win": "F:\\MiKTeX\\miktex\\bin\\x64\\pdflatex.exe",
+    "tex_path_linux": "/usr/bin/pdflatex",
+    "tex_path_mac": "/Library/TeX/texbin/pdflatex"
+}
