@@ -4,6 +4,7 @@ import pathlib
 import websockets
 import json
 from typing import Optional
+import copy
 
 
 project_root = str(pathlib.Path(__file__).parent)
@@ -12,8 +13,7 @@ if project_root not in sys.path:
 from loader import moduleloader
 
 onebot_package = moduleloader.ModuleLoader(str(pathlib.Path(__file__).parent / "onebot"))
-onebot_api_module = onebot_package.load_module("api")
-onebot_api = onebot_api_module.OneBotAPI()
+onebot_api_module = onebot_package.load_module("api", hot_reload=True)
 
 bot_package = moduleloader.ModuleLoader(str(pathlib.Path(__file__).parent / "entity"))
 bot_module = bot_package.load_module("bot")
@@ -26,18 +26,23 @@ class ExitException(Exception):
     pass
 
 
-async def process_message(ws, Bots):
+async def process_message(ws, Bots, echo_pool):
     while not close_event.is_set():
         try:
             message = json.loads(await ws.recv())
+
+            if "status" in message and "echo" in message:
+                echo_pool.echo_dict[message["echo"]] = message
+                continue
+                        
             if message["post_type"] == "meta_event" and message["meta_event_type"] == "heartbeat":
                 print("[🟨|Websocket]Received heartbeat")
                 continue
-            print("[🟨|Websocket]Received message: ", message)
+            #print("[🟨|Websocket]Received message: ", message)
             if message["post_type"] == "message" and message["message_type"] == "group":
                 for bot in Bots:
                     # 改用 asyncio.ensure_future 替代 create_task
-                    asyncio.ensure_future(bot.receive_group_message(ws, message))
+                    asyncio.ensure_future(bot.receive_group_message(ws, copy.deepcopy(message)))
             else:
                 print("[🟥|Websocket]Unsupported message type: ", message)
         except websockets.exceptions.ConnectionClosedError:
@@ -48,8 +53,9 @@ async def process_message(ws, Bots):
             await asyncio.sleep(1)
 
 async def server():
-    print("[System]Booting up...")
-    Bots = [bot_module.Bot()]
+    print("[🟧|System]Booting up...")
+    echo_pool = onebot_api_module.EchoPool()
+    Bots = [bot_module.Bot(echo_pool)]
     ws: Optional[websockets.WebSocketClientProtocol] = None
 
     while not close_event.is_set():
@@ -62,14 +68,14 @@ async def server():
             if "self_id" in response:
                 bot_qq = response["self_id"]
                 print("[🟩|Websocket]Connected to bot backend successfully")
-                group_list = json.loads(await onebot_api.get_bot_group_list(ws, False))
+                group_list = json.loads(await onebot_api_module.OneBotAPI(echo_pool).get_bot_group_list(ws, False))
                 print("[🟩|Websocket]Bot group list: length", len(group_list['data']))
 
                 for bot in Bots:
                     bot.bot_qq = bot_qq
                     await bot.create(ws)
 
-                await process_message(ws, Bots)
+                await process_message(ws, Bots, echo_pool)
             else:
                 print("[🟥|Websocket]Failed to connect to bot backend: ", response)
                 await asyncio.sleep(5)
@@ -82,25 +88,28 @@ async def server():
             await asyncio.sleep(5)
             print("[🟨|Websocket]Reconnecting...")
         except Exception as e:
-            print("[🟥|Websocket]Error: ", e, "reconnect after 5 seconds")
+            print(f"[🟥|Websocket]Error: {str(e)}, reconnect after 5 seconds")
             if ws:
                 await ws.close()
             await asyncio.sleep(5)
             print("[🟨|Websocket]Reconnecting...")
 
-    print("[System]Server is shutting down...")
+    print("[🟧|System]Server is shutting down...")
+    echo_pool.close_event.set()
+    for bot in Bots:
+        await bot.destroy(ws)
 
 async def cleanup():
-    print("[System]Cleaning up...")
+    print("[🟧|System]Cleaning up...")
     tasks = [task for task in asyncio.all_tasks() 
              if task is not asyncio.current_task()]
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
-    print("[System]Cleanup completed")
+    print("[🟧|System]Cleanup completed")
 
 def signal_handler():
-    print("\n[System]Received shutdown signal")
+    print("\n[🟧|System]Received shutdown signal")
     close_event.set()
 
 async def main():
@@ -108,7 +117,7 @@ async def main():
         
         await server()
     except Exception as e:
-        print(f'[System]Error in main: {e}')
+        print(f'[🟥|System]Error in main: {e}')
     finally:
         await cleanup()
 
@@ -123,7 +132,7 @@ if __name__ == '__main__':
         
         loop.run_until_complete(main())
     except KeyboardInterrupt:
-        print("\n[System]KeyboardInterrupt received")
+        print("\n[🟥|System]KeyboardInterrupt received")
     finally:
         pending = asyncio.all_tasks(loop=loop)
         for task in pending:
@@ -133,4 +142,4 @@ if __name__ == '__main__':
         loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
         loop.run_until_complete(loop.shutdown_asyncgens())
         loop.close()
-        print("[System]Event loop closed")
+        print("[🟥|System]Event loop closed")

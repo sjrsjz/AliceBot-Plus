@@ -1,8 +1,10 @@
 import importlib
 import os
 import sys
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Set
 from pathlib import Path
+import threading
+import time
 #import logging
 
 class ModuleLoader:
@@ -16,10 +18,15 @@ class ModuleLoader:
             module_dir: 模块目录的路径
         """
         self.module_dir = Path(module_dir)
-        self.modules: Dict[str, Any] = {}  # 模块缓存
-        self.last_modified: Dict[str, float] = {}  # 文件最后修改时间
-        #self.logger = logging.getLogger("ModuleLoader")
-        self._watch_interval = 1.0  # 文件监视间隔(秒)
+        self.instances: Dict[str, Dict[str, Any]] = {}
+        self.last_modified: Dict[str, float] = {}
+        self._watch_interval = 1.0
+        self._caller_id = id(self)
+        self._watch_thread: Optional[threading.Thread] = None
+        self._should_stop = threading.Event()
+        self._hot_reload_modules: Set[str] = set()  # 存储需要热重载的模块名称
+        self._lock = threading.Lock()  # 添加线程锁
+        self._lock_2 = threading.Lock()  # 添加线程锁
 
     def _get_module_path(self, module_name: str) -> Path:
         """获取模块文件的完整路径"""
@@ -28,140 +35,144 @@ class ModuleLoader:
     def _get_module_modified_time(self, module_path: Path) -> float:
         """获取模块文件的最后修改时间"""
         return os.path.getmtime(module_path)
+    def _watch_for_changes(self):
+        """监控文件变化的线程函数"""
+        while not self._should_stop.is_set():
+            with self._lock:
+                for module_name in self._hot_reload_modules:
+                    try:
+                        module_path = self._get_module_path(module_name)
+                        if not module_path.exists():
+                            continue
+                            
+                        current_mtime = self._get_module_modified_time(module_path)
+                        if (module_name in self.last_modified and 
+                            current_mtime > self.last_modified[module_name]):
+                            print(f"[🟨|ModuleLoader]Detected change in module {module_name}, reloading...", flush=True)
+                            self.load_module(module_name, hot_reload=True)
+                    except Exception as e:
+                        print(f"[🟥|ModuleLoader]Error checking module {module_name}: {str(e)}")
+            
+            time.sleep(self._watch_interval)
 
-    def load_module(self, module_name: str) -> Optional[Any]:
-        """
-        加载或重载一个模块
-        
-        Args:
-            module_name: 模块名称（不含.py后缀）
+    def start_watching(self):
+        """启动文件监控线程"""
+        if self._watch_thread is None or not self._watch_thread.is_alive():
+            self._should_stop.clear()
+            self._watch_thread = threading.Thread(target=self._watch_for_changes, daemon=True)
+            self._watch_thread.start()
+            print("[🟩|ModuleLoader]Started watching for module changes")
+
+    def stop_watching(self):
+        """停止文件监控线程"""
+        if self._watch_thread and self._watch_thread.is_alive():
+            self._should_stop.set()
+            self._watch_thread.join()
+            print("[🟧|ModuleLoader]Stopped watching for module changes")
+
+    def load_module(self, module_name: str, hot_reload: bool = False, use_lock = False) -> Optional[Any]:
+        """加载或重载一个模块"""
+        with self._lock if use_lock else self._lock_2:
+            try:
+                module_path = self._get_module_path(module_name)
+                
+                if not module_path.exists():
+                    print(f"[🟥|ModuleLoader]Module {module_name} not found at {module_path}")
+                    return None
+
+                if hot_reload:
+                    self._hot_reload_modules.add(module_name)
+                    if not self._watch_thread or not self._watch_thread.is_alive():
+                        self.start_watching()
+                current_mtime = self._get_module_modified_time(module_path)
+                caller_id = str(id(self))  # 获取当前调用者的ID
             
-        Returns:
-            加载的模块对象，加载失败则返回None
-        """
-        try:
-            module_path = self._get_module_path(module_name)
-            
-            if not module_path.exists():
-                #self.logger.error(f"Module {module_name} not found at {module_path}")
-                print(f"[🟥|ModuleLoader]Module {module_name} not found at {module_path}")
+                # 清理所有相关的模块缓存
+                for key in list(sys.modules.keys()):
+                    if module_name in key:
+                        del sys.modules[key]
+                
+                # 如果之前存在实例，先清理
+                if caller_id in self.instances and module_name in self.instances[caller_id]:
+                    del self.instances[caller_id][module_name]
+                                
+                # 为每个调用者创建独立的模块实例字典
+                if caller_id not in self.instances:
+                    self.instances[caller_id] = {}
+                    
+                # # 创建唯一的模块名
+                # unique_module_name = f"{module_name}_{current_mtime}_{caller_id}"
+                
+                # # 清理旧的模块引用
+                # if unique_module_name in sys.modules:
+                #     del sys.modules[unique_module_name]
+                
+                # 重新加载模块
+                spec = importlib.util.spec_from_file_location(module_name, module_path)
+                if spec is None:
+                    print(f"[🟥|ModuleLoader]Failed to create module spec for {module_name}")
+                    return None
+                    
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[module_name] = module
+                
+                if spec.loader:
+                    spec.loader.exec_module(module)
+
+                # 存储该调用者的模块实例
+                self.instances[caller_id][module_name] = module
+                self.last_modified[module_name] = current_mtime
+                
+                action = "reloaded" if module_name in self.instances[caller_id] else "loaded"
+                print(f"[🟩|ModuleLoader]Successfully {action} module {module_name} for caller {caller_id}", flush=True)
+                
+                return module
+
+            except Exception as e:
+                print(f"[🟥|ModuleLoader]Error loading module {module_name}: {str(e)}")
                 return None
-
-            current_mtime = self._get_module_modified_time(module_path)
-            last_mtime = self.last_modified.get(module_name, 0)
-            
-            # 检查是否需要重新加载
-            if module_name in self.modules and current_mtime <= last_mtime:
-                return self.modules[module_name]
-                
-            # 创建唯一的模块名，确保每次重载都是新的副本
-            unique_module_name = f"{module_name}_{current_mtime}"
-            
-            # 清理旧的模块引用
-            if module_name in sys.modules:
-                del sys.modules[module_name]
-            if unique_module_name in sys.modules:
-                del sys.modules[unique_module_name]
-                
-            # 重新加载模块
-            spec = importlib.util.spec_from_file_location(unique_module_name, module_path)
-            if spec is None:
-                #self.logger.error(f"Failed to create module spec for {module_name}")
-                print(f"[🟥|ModuleLoader]Failed to create module spec for {module_name}")
-                return None
-                
-            module = importlib.util.module_from_spec(spec)
-            sys.modules[unique_module_name] = module  # 将模块添加到 sys.modules
-            
-            if spec.loader:
-                spec.loader.exec_module(module)
-
-            # 直接存储模块对象，不进行深拷贝
-            self.modules[module_name] = module
-            self.last_modified[module_name] = current_mtime
-            
-            action = "reloaded" if module_name in self.modules else "loaded"
-            #self.logger.info(f"Successfully {action} module {module_name}")
-            print(f"[🟩|ModuleLoader]Successfully {action} module {module_name}")
-            
-            return module
-
-        except Exception as e:
-            #self.logger.error(f"Error loading module {module_name}: {str(e)}")
-            print(f"[🟥|ModuleLoader]Error loading module {module_name}: {str(e)}")
-            return None
-    def load_all_modules(self) -> Dict[str, Any]:
-        """
-        加载目录中的所有Python模块
-        
-        Returns:
-            包含所有已加载模块的字典
-        """
-        loaded_modules = {}
-        
-        for file_path in self.module_dir.glob("*.py"):
-            if file_path.stem.startswith("__"):
-                continue
-                
-            module = self.load_module(file_path.stem)
-            if module:
-                loaded_modules[file_path.stem] = module
-                
-        return loaded_modules
-
+    def get_module(self, module_name: str) -> Optional[Any]:
+        """动态获取一个模块"""
+        caller_id = str(id(self))
+        if caller_id in self.instances and module_name in self.instances[caller_id]:
+            return self.instances[caller_id][module_name]
+        return None
     def unload_module(self, module_name: str) -> bool:
-        """
-        卸载一个模块
-        
-        Args:
-            module_name: 要卸载的模块名称
-            
-        Returns:
-            卸载是否成功
-        """
-        try:
-            module_path = str(self._get_module_path(module_name).absolute())
-            if module_path in sys.modules:
-                del sys.modules[module_path]
-            if module_name in self.modules:
-                del self.modules[module_name]
-            if module_name in self.last_modified:
-                del self.last_modified[module_name]
-            return True
-        except Exception as e:
-            #self.logger.error(f"Error unloading module {module_name}: {str(e)}")
-            print(f"[🟥|ModuleLoader]Error unloading module {module_name}: {str(e)}")
-            return False
-        
+        """卸载一个模块"""
+        with self._lock:
+            try:
+                caller_id = str(id(self))
+                if caller_id in self.instances and module_name in self.instances[caller_id]:
+                    del self.instances[caller_id][module_name]
+                if module_name in self.last_modified:
+                    del self.last_modified[module_name]
+                self._hot_reload_modules.discard(module_name)  # 移除热重载监控
+                return True
+            except Exception as e:
+                print(f"[🟥|ModuleLoader]Error unloading module {module_name}: {str(e)}")
+                return False
     def unload_all_modules(self) -> bool:
-        """
-        卸载目录中的所有Python模块
-        
-        Returns:
-            卸载是否成功
-        """
+        """卸载所有模块"""
         try:
-            for module_name in list(self.modules.keys()):
-                self.unload_module(module_name)
+            caller_id = str(id(self))
+            if caller_id in self.instances:
+                self.instances[caller_id].clear()
             return True
         except Exception as e:
-            #self.logger.error(f"Error unloading all modules: {str(e)}")
             print(f"[🟥|ModuleLoader]Error unloading all modules: {str(e)}")
             return False
-
     def __del__(self):
+        self.stop_watching()
         self.unload_all_modules()
-        #self.logger.info("ModuleLoader destroyed")
         print("[🟧|ModuleLoader]ModuleLoader destroyed")
 
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.stop_watching()
+        self.unload_all_modules()
+        print("[🟧|ModuleLoader]ModuleLoader exited")
     def __enter__(self):
         return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.unload_all_modules()
-        #self.logger.info("ModuleLoader exited")
-        print("[🟧|ModuleLoader]ModuleLoader exited")
-        
+
     def from_path(self, subpath: str):
         """支持子路径导入"""
         new_path = Path(self.module_dir) / subpath
