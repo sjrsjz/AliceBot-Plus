@@ -4,3 +4,4 @@
 .pyppeteer
 tmp
 output.png
+**/apikey.json
