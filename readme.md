@@ -1,5 +1,5 @@
 <div align="center">
-  <h1><img src="image/readme/1740150452111.jpg" width="24px" height="auto" alt="AliceBot Logo" align="center"> AliceBot+</h1>
+  <h1><img src="image/readme/1740150452111.jpg" width="28px" height="auto" alt="AliceBot Logo" style="vertical-align: middle;"> AliceBot+</h1>
   <p>
     <strong>QQ bot powered by AI</strong>
   </p>
