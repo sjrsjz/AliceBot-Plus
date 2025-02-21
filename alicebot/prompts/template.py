@@ -296,7 +296,7 @@ async def process_chatbot_typeset(message: str, FUNCTION_HANDLERS: dict, **kwarg
 
     return final_msg
 def __test__():
-    from src.loader.moduleloader import ModuleLoader
+    from alicebot.loader.moduleloader import ModuleLoader
     import pathlib
     
     with ModuleLoader(str(pathlib.Path(__file__).parent) + "/example") as loader:

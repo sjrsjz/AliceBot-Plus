@@ -16,3 +16,8 @@ tiktoken
 
 textwrap
 base64
+
+simple-fjson
+
+asyncio
+aiohttp

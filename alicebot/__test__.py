@@ -1,4 +1,4 @@
-from src.loader import moduleloader
+from alicebot.loader import moduleloader
 import pathlib
 import asyncio
 prompts_package = moduleloader.ModuleLoader(str(pathlib.Path(__file__).parent) + "/prompts")
