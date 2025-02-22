@@ -1,8 +1,10 @@
 import asyncio
 import websockets
 import sys
+import os
 import pathlib
-
+import fJson as fjson
+import enum
 
 from typing import Callable, Any
 log_func: Callable[[Any], None]
@@ -21,7 +23,62 @@ message_codec = message_codec_package.load_module("codec", hot_reload=True, log_
 
 from util.timeout import timeout
 
+plugin_dir = pathlib.Path(__file__).parent.parent / "plugin"
+plugin_package = moduleloader.ModuleLoader(str(plugin_dir), log_func=log_func) # Import the plugin package
 
+if not plugin_dir.exists():
+    plugin_dir.mkdir()
+# 枚举所有插件
+plugin_names = [x for x in os.listdir(str(plugin_dir)) if '.py' in x]
+
+
+class PluginStatus(enum.Enum):
+    ACTIVE = 1
+    INACTIVE = 0
+
+class PluginPermission(enum.Enum):
+    ADMIN = 1
+    USER = 0
+
+
+meta_path = plugin_dir / "meta.json"
+
+@fjson.DataClass
+class PluginMeta:
+    def __init__(self, meta = {}):
+        self.meta = meta
+    def activate_plugin(self, plugin_name, meta_path = meta_path):
+        self.meta[plugin_name]['active'] = PluginStatus.ACTIVE
+        self.save(meta_path=meta_path)
+
+    def deactivate_plugin(self, plugin_name, meta_path = meta_path):
+        self.meta[plugin_name]['active'] = PluginStatus.INACTIVE
+        self.save(meta_path=meta_path)
+
+    def set_plugin_permission(self, plugin_name, permission, meta_path = meta_path):
+        self.meta[plugin_name]['permission'] = permission
+        self.save(meta_path=meta_path)
+
+    def get_plugin_permission(self, plugin_name, meta_path = meta_path):
+        return self.meta.get(plugin_name, {}).get('permission', PluginPermission.USER)    
+    def get_plugin_status(self, plugin_name, meta_path = meta_path):
+        return self.meta.get(plugin_name, {}).get('active', PluginStatus.INACTIVE)
+    
+    def save(self, meta_path = meta_path):
+        with open(meta_path, 'w', encoding='utf-8') as f:
+            f.write(self.json(indent=4, multi_line=True))
+
+    def load(self, meta_path = meta_path):
+        with open(meta_path, 'r', encoding='utf-8') as f:
+            self.load_json(f.read())
+
+plugin_meta = PluginMeta()
+if not meta_path.exists():
+    plugin_meta.save()
+else:
+    plugin_meta.load()
+
+log_func("[🟨|Bot]Plugin meta:", plugin_meta.json())
 class Bot:
     def __init__(self, echo_pool):
         self.bot_qq = None
