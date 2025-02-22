@@ -24,9 +24,9 @@ async def wolfram_alpha_compute(query, image_only=False):
         await websocket.send(json.dumps(msg))
         response = json.loads(await websocket.recv())
         if "type" in response and response["type"] != "ready":
-            log_func("[Wolfram Alpha]Error:", response)
+            log_func('ERROR', 'WolframAlpha', "Error:", response)
             return None
-        log_func("[Wolfram Alpha]Response:", response)
+        log_func('INFO', 'WolframAlpha', "Response:", response)
         msg = {"type": "newQuery",
                "locationId": "oi8ft_en_light",
                "language": "en",
@@ -40,7 +40,7 @@ async def wolfram_alpha_compute(query, image_only=False):
                "apiParams": {},
                "file": None,
                "theme": "light"}
-        log_func("[Wolfram Alpha]Sending Query:", msg)
+        log_func('INFO', 'WolframAlpha', "Sending Query:", msg)
         await websocket.send(json.dumps(msg))
         while True:
             response = await websocket.recv()
@@ -68,7 +68,7 @@ async def wolfram_alpha_compute(query, image_only=False):
                     if "img" in subpods and "contenttype" in subpods["img"]:
                         data.update({"img_contenttype": subpods["img"]["contenttype"]})
                 results.append(data)
-    log_func("[Wolfram Alpha]Results:", results)
+    log_func('INFO', 'WolframAlpha', "Results:", results)
     return results
 
 
@@ -88,9 +88,9 @@ async def wolfram_alpha_compute_without_image(query):
         await websocket.send(json.dumps(msg))
         response = json.loads(await websocket.recv())
         if "type" in response and response["type"] != "ready":
-            log_func("[Wolfram Alpha]Error:", response)
+            log_func('ERROR', 'WolframAlpha', "Error:", response)
             return None
-        log_func("[Wolfram Alpha]Response:", response)
+        log_func('INFO', 'WolframAlpha', "Response:", response)
         msg = {"type": "newQuery",
                "locationId": "oi8ft_en_light",
                "language": "en",
@@ -104,7 +104,7 @@ async def wolfram_alpha_compute_without_image(query):
                "apiParams": {},
                "file": None,
                "theme": "light"}
-        log_func("[Wolfram Alpha]Sending Query:", msg)
+        log_func('INFO', 'WolframAlpha', "Sending Query:", msg)
         await websocket.send(json.dumps(msg))
         while True:
             response = await websocket.recv()
@@ -127,7 +127,7 @@ async def wolfram_alpha_compute_without_image(query):
                     if "moutput" in subpods:
                         data.update({"moutput": subpods["moutput"]})
                 results.append(data)
-    log_func("[Wolfram Alpha]Results:", results)
+    log_func('INFO', 'WolframAlpha', "Results:", results)
     return results
 
 

@@ -17,23 +17,26 @@ class OneBotAPI:
     def __init__(self, echo_pool=None):
         self.echo_pool = echo_pool
 
-    async def get_stranger_info(self, ws, user_id):
-        if self.echo_pool.echo_dict is None: raise Exception("Echo dict not set")
-        log_func('INFO', 'OneBot', "Getting stranger info:", user_id)
+    async def _make_request(self, ws, json_data):
         self.echo_pool.echo_counter += 1
         self_echo = str(self.echo_pool.echo_counter)
-        json_data = {
-            "action": "get_stranger_info",
-            "params": {
-                "user_id": user_id
-            },
-            "echo": self_echo
-        }
+        json_data["echo"] = self_echo
         await ws.send(json.dumps(json_data))
         while self_echo not in self.echo_pool.echo_dict and not self.echo_pool.close_event.is_set():
             await asyncio.sleep(0.1)
         response = self.echo_pool.echo_dict[self_echo]
         del self.echo_pool.echo_dict[self_echo]
+        return response
+    async def get_stranger_info(self, ws, user_id):
+        if self.echo_pool.echo_dict is None: raise Exception("Echo dict not set")
+        log_func('INFO', 'OneBot', "Getting stranger info:", user_id)
+        json_data = {
+            "action": "get_stranger_info",
+            "params": {
+                "user_id": user_id
+            },
+        }
+        response = await self._make_request(ws, json_data)
         if "data" in response and response["data"] is not None:
             log_func('INFO', 'OneBot', "Successfully got stranger info")
             return response["data"]
@@ -43,20 +46,17 @@ class OneBotAPI:
     async def get_bot_group_list(self, ws, async_mode=True):
         if self.echo_pool.echo_dict is None: raise Exception("Echo dict not set")
         log_func('INFO', 'OneBot', "Getting bot group list")
-        self.echo_pool.echo_counter += 1
-        self_echo = str(self.echo_pool.echo_counter)
         json_data = {
             "action": "get_group_list",
             "params": {},
-            "echo": self_echo
         }
-        await ws.send(json.dumps(json_data))
         if not async_mode:
+            self.echo_pool.echo_counter += 1
+            self_echo = str(self.echo_pool.echo_counter)
+            json_data["echo"] = self_echo
+            await ws.send(json.dumps(json_data))
             return await ws.recv()
-        while self_echo not in self.echo_pool.echo_dict and not self.echo_pool.close_event.is_set():
-            await asyncio.sleep(0.1)
-        response = self.echo_pool.echo_dict[self_echo]
-        del self.echo_pool.echo_dict[self_echo]
+        response = await self._make_request(ws, json_data)
         if "data" in response and response["data"] is not None:
             log_func('INFO', 'OneBot', "Successfully got bot group list")
             return response["data"]
@@ -66,21 +66,13 @@ class OneBotAPI:
     async def get_member_list(self, ws, group_id):
         if self.echo_pool.echo_dict is None: raise Exception("Echo dict not set")
         log_func('INFO', 'OneBot', "Getting member list of group:", group_id)
-        self.echo_pool.echo_counter += 1
-        self_echo = str(self.echo_pool.echo_counter)
         json_data = {
             "action": "get_group_member_list",
             "params": {
                 "group_id": group_id
             },
-            "echo": self_echo
         }
-        await ws.send(json.dumps(json_data))
-
-        while self_echo not in self.echo_pool.echo_dict and not self.echo_pool.close_event.is_set():
-            await asyncio.sleep(0.1)
-        response = self.echo_pool.echo_dict[self_echo]
-        del self.echo_pool.echo_dict[self_echo]
+        response = await self._make_request(ws, json_data)
         if "data" in response and response["data"] is not None:
             log_func('INFO', 'OneBot', "Successfully got member list")
             return response["data"]
@@ -90,8 +82,6 @@ class OneBotAPI:
     async def send_group_message(self, ws, group_id, message, auto_escape=False):
         if self.echo_pool.echo_dict is None: raise Exception("Echo dict not set")
         log_func('INFO', 'OneBot', "Sending group message to group:", group_id)
-        self.echo_pool.echo_counter += 1
-        self_echo = str(self.echo_pool.echo_counter)
         json_data = {
             "action": "send_group_msg",
             "params": {
@@ -99,13 +89,8 @@ class OneBotAPI:
                 "message": message,
                 "auto_escape": auto_escape
             },
-            "echo": self_echo
         }
-        await ws.send(json.dumps(json_data))
-        while self_echo not in self.echo_pool.echo_dict and not self.echo_pool.close_event.is_set():
-            await asyncio.sleep(0.1)
-        response = self.echo_pool.echo_dict[self_echo]
-        del self.echo_pool.echo_dict[self_echo]
+        response = await self._make_request(ws, json_data)
         if "status" in response:
             if response["status"] == "ok":
                 log_func('INFO', 'OneBot', "Message sent successfully")
@@ -136,8 +121,6 @@ class OneBotAPI:
     async def send_private_message(self, ws, user_id, message, auto_escape=False):
         if self.echo_pool.echo_dict is None: raise Exception("Echo dict not set")
         log_func('INFO', 'OneBot', "Sending private message to user:", user_id)
-        self.echo_pool.echo_counter += 1
-        self_echo = str(self.echo_pool.echo_counter)
         json_data = {
             "action": "send_private_msg",
             "params": {
@@ -145,13 +128,8 @@ class OneBotAPI:
                 "message": message,
                 "auto_escape": auto_escape
             },
-            "echo": self_echo
         }
-        await ws.send(json.dumps(json_data))
-        while self_echo not in self.echo_pool.echo_dict and not self.echo_pool.close_event.is_set():
-            await asyncio.sleep(0.1)
-        response = self.echo_pool.echo_dict[self_echo]
-        del self.echo_pool.echo_dict[self_echo]
+        response = await self._make_request(ws, json_data)
         if "status" in response:
             if response["status"] == "ok":
                 log_func('INFO', 'OneBot', "Message sent successfully")
@@ -168,21 +146,14 @@ class OneBotAPI:
     async def get_group_info(self, ws, group_id):
         if self.echo_pool.echo_dict is None: raise Exception("Echo dict not set")
         log_func('INFO', 'OneBot', "Getting group info of group:", group_id)
-        self.echo_pool.echo_counter += 1
-        self_echo = str(self.echo_pool.echo_counter)
         json_data = {
             "action": "get_group_info",
             "params": {
                 "group_id": group_id,
                 "no_cache": True
             },
-            "echo": self_echo
         }
-        await ws.send(json.dumps(json_data))
-        while self_echo not in self.echo_pool.echo_dict and not self.echo_pool.close_event.is_set():
-            await asyncio.sleep(0.1)
-        response = self.echo_pool.echo_dict[self_echo]
-        del self.echo_pool.echo_dict[self_echo]
+        response = await self._make_request(ws, json_data)
         if "data" in response and response["data"] is not None:
             log_func('INFO', 'OneBot', "Successfully got group info")
             return response["data"]
@@ -194,20 +165,13 @@ class OneBotAPI:
         if message_id is None:
             return None
         log_func('INFO', 'OneBot', "Withdrawing message:", message_id)
-        self.echo_pool.echo_counter += 1
-        self_echo = str(self.echo_pool.echo_counter)
         json_data = {
             "action": "delete_msg",
             "params": {
                 "message_id": message_id
             },
-            "echo": self_echo
         }
-        await ws.send(json.dumps(json_data))
-        while self_echo not in self.echo_pool.echo_dict and not self.echo_pool.close_event.is_set():
-            await asyncio.sleep(0.1)
-        response = self.echo_pool.echo_dict[self_echo]
-        del self.echo_pool.echo_dict[self_echo]
+        response = await self._make_request(ws, json_data)
         if "status" in response:
             if response["status"] == "ok":
                 log_func('INFO', 'OneBot', "Withdraw successfully")
@@ -218,8 +182,6 @@ class OneBotAPI:
     async def set_group_ban(self, ws, group_id, user_id, duration):
         if self.echo_pool.echo_dict is None: raise Exception("Echo dict not set")
         log_func('INFO', 'OneBot', "Banning user:", user_id)
-        self.echo_pool.echo_counter += 1
-        self_echo = str(self.echo_pool.echo_counter)
         json_data = {
             "action": "set_group_ban",
             "params": {
@@ -227,13 +189,8 @@ class OneBotAPI:
                 "user_id": user_id,
                 "duration": duration
             },
-            "echo": self_echo
         }
-        await ws.send(json.dumps(json_data))
-        while self_echo not in self.echo_pool.echo_dict and not self.self.echo_pool.close_event.is_set():
-            await asyncio.sleep(0.1)
-        response = self.echo_pool.echo_dict[self_echo]
-        del self.echo_pool.echo_dict[self_echo]
+        response = await self._make_request(ws, json_data)
         if "status" in response:
             if response["status"] == "ok":
                 log_func('INFO', 'OneBot', "Successfully banned user")

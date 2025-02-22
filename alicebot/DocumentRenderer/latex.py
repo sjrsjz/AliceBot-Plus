@@ -46,7 +46,7 @@ class Config:
                     config.tex_path_mac = data.get("tex_path_mac", r"/Library/TeX/texbin/pdflatex")
                 return config
         except Exception as e:
-            log_func(f"[Config] Failed to load config: {e}")
+            log_func('ERROR', 'Config', f"Failed to load config: {e}")
             return cls()
 
 
@@ -68,7 +68,7 @@ elif sys.platform == "darwin":
     tex_path = config.tex_path_mac
     os.environ["PATH"] += os.pathsep + os.path.dirname(tex_path)
 else:
-    log_func("Unknown platform")
+    log_func('ERROR', 'LaTeX', "Unknown platform")
     sys.exit(-1)
 
 matplotlib.rc("font", family='STSong')
@@ -135,7 +135,7 @@ def get_formula_image_data(formula):
         image_data = buf.getvalue()
         buf.close()
     except:
-        log_func(f"[LaTeX]{traceback.format_exc()}")
+        log_func('ERROR', 'LaTeX', traceback.format_exc())
         return None
     return image_data
 
@@ -161,7 +161,7 @@ def get_pie_chart_image_data(data, labels):
         image_data = buf.getvalue()
         buf.close()
     except:
-        log_func(f"[LaTeX]{traceback.format_exc()}")
+        log_func('ERROR', 'LaTeX', traceback.format_exc())
         return None
     return image_data
 
@@ -178,7 +178,7 @@ def format_LaTeX_to_png_ws(text) -> str:
         for m in re.finditer(text):
             formula = m.group()
             formula_ = formula
-            log_func("[LaTeX]", formula)
+            log_func('INFO', 'LaTeX', formula)
             mul_line = False
             while formula.startswith("$$"):  # 将开头的$$换成$
                 formula = formula[1:]
@@ -197,7 +197,7 @@ def format_LaTeX_to_png_ws(text) -> str:
                 image_base64 = base64.b64encode(image_data).decode()
                 result = result.replace(formula_, f" {formula_} \"Image_Base64:{image_base64}\" ")
     except:
-        log_func(f"[LaTeX]{traceback.format_exc()}")
+        log_func('ERROR', 'LaTeX', traceback.format_exc())
         return text
     return result
 
@@ -214,7 +214,7 @@ def format_LaTeX_to_png_CQ(text) -> str:
         for m in re.finditer(text):
             formula = m.group()
             formula_ = formula
-            log_func("[LaTeX]", formula)
+            log_func('INFO', 'LaTeX', formula)
             while formula.startswith("$$"):  # 将开头的$$换成$
                 formula = formula[1:]
             while formula.endswith("$$"):
@@ -228,6 +228,6 @@ def format_LaTeX_to_png_CQ(text) -> str:
                 image_base64 = base64.b64encode(image_data).decode()
                 result = result.replace(formula_, f" {formula_} [CQ:image,file=base64://{image_base64}] ")
     except:
-        log_func(f"[LaTeX]{traceback.format_exc()}")
+        log_func('ERROR', 'LaTeX', traceback.format_exc())
         return text
     return result

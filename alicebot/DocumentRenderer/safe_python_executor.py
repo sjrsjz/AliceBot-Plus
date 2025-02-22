@@ -153,5 +153,5 @@ def safe_exec(code: str, timeout: int = 30) -> tuple:
         return img_data, True
 
     except Exception as e:
-        log_func(f"[Python Executor]Error: {str(e)}")
+        log_func('ERROR', 'PyExec', f"Error: {str(e)}")
         return f"系统错误: {str(e)}", False

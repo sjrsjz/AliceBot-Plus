@@ -16,10 +16,7 @@ if project_root not in sys.path:
 from loader import moduleloader
 
 package = moduleloader.ModuleLoader(str(pathlib.Path(__file__).parent), log_func=log_func)
-apikey = package.load_module("apikey", log_func=log_func)
-
-gai.configure(api_key=apikey.config.key_gemini())
-
+package.load_module("apikey", hot_reload=True, log_func=log_func)
 
 def to_markdown(text):
     text = text.replace('•', '  *')
@@ -28,15 +25,12 @@ def to_markdown(text):
 
 async def image_to_text(image):
     try:
-        log_func("[Gemini]Generating text from image[...")
+        log_func('INFO', 'Gemini', "Generating text from image[...")
+        gai.configure(api_key=package['apikey'].config.key_gemini())
         model = gai.GenerativeModel('gemini-1.5-flash')
         response = await model.generate_content_async(["Only output what the Image is", pi.open(io.BytesIO(image))])
-        log_func("[Gemini]text: ", response.text)
+        log_func('INFO', 'Gemini', "text: ", response.text)
         return response.text
     except Exception as e:
-        log_func("[Gemini]Error: ", e)
+        log_func('ERROR', 'Gemini', "Error: ", e)
         return "Error:" + str(e)
-
-
-if __name__ == "__main__":
-    pass

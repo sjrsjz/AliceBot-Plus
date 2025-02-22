@@ -21,7 +21,7 @@ def render(typst_text: str) -> str:
                 f.write(typst_text)
         except Exception as e:
             os.remove(tmp_file)
-            log_func("[Typst Renderer]Error:", e)
+            log_func('ERROR', 'Typst', "Error:", e)
             raise e
         # render
         try:
@@ -29,7 +29,7 @@ def render(typst_text: str) -> str:
             os.remove(tmp_file)
         except Exception as e:
             os.remove(tmp_file)
-            log_func("[Typst Renderer]Error:", e)
+            log_func('ERROR', 'Typst', "Error:", e)
             raise e
         # remove tmp file
         return img
@@ -46,7 +46,7 @@ def render(typst_text: str) -> str:
                 f.write(typst_text)
         except Exception as e:
             os.remove(tmp_file)
-            log_func("[Typst Renderer]Error:", e)
+            log_func('ERROR', 'Typst', "Error:", e)
             raise e
         # render
         try:
@@ -54,7 +54,7 @@ def render(typst_text: str) -> str:
             os.remove(tmp_file)
         except Exception as e:
             os.remove(tmp_file)
-            log_func("[Typst Renderer]Error:", e)
+            log_func('ERROR', 'Typst', "Error:", e)
             raise e
         return img
     else:

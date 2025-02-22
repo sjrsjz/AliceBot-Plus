@@ -49,7 +49,7 @@ async def setup_browser():
             browser = await launch(headless=True, dumpio=True, userDataDir=cache_dir)
         return browser
     except Exception as e:
-        log_func("[Web Search]Chrome not found, using Edge instead")
+        log_func('ERROR', 'WebSearch', "Chrome not found, using Edge instead")
         edge_path = os.environ.get("EDGE_PATH", "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe")
         browser = await launch(headless=True, executablePath=edge_path)
         return browser
@@ -59,7 +59,7 @@ async def bing_search(browser, query: str, max_results: int = 3):
     page = None
     try:
         page = await browser.newPage()
-        log_func("[Web Search]Searching Bing for:", query)
+        log_func('INFO', 'WebSearch', "Searching Bing for:", query)
         await page.setUserAgent(
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
         await page.setExtraHTTPHeaders({
@@ -72,16 +72,16 @@ async def bing_search(browser, query: str, max_results: int = 3):
         page.setDefaultNavigationTimeout(120000)
 
         await asyncio.sleep(random.uniform(1, 3))
-        log_func("[Web Search]Navigating to Bing")
+        log_func('INFO', 'WebSearch', "Navigating to Bing")
         try:
             response = await page.goto('https://www.bing.com/',
                                        waitUntil=['networkidle0'])
             if not response.ok:
                 raise Exception(f"Failed to load Bing: {response.status}")
         except Exception as e:
-            log_func(f"Navigation error: {e}")
+            log_func('ERROR', 'WebSearch', f"Navigation error: {e}")
             return [{"title": "Navigation failed", "url": "", "content": str(e)}]
-        log_func("[Web Search]Searching for:", query)
+        log_func('INFO', 'WebSearch', "Searching for:", query)
         search_selector = '#sb_form_q'
         await page.waitForSelector(search_selector, {'timeout': 10000})
         await page.type(search_selector, query, {'delay': random.randint(5, 7)})
@@ -89,7 +89,7 @@ async def bing_search(browser, query: str, max_results: int = 3):
 
         await page.keyboard.press('Enter')
         await page.waitForNavigation({'waitUntil': 'networkidle0'})
-        log_func("[Web Search]Waiting for search results")
+        log_func('INFO', 'WebSearch', "Waiting for search results")
         results_selector = '#b_results .b_algo'
         await page.waitForSelector(results_selector, {'timeout': 10000})
 
@@ -170,7 +170,7 @@ async def bing_search(browser, query: str, max_results: int = 3):
                 return results.filter(r => r.title);
             }
         ''')
-        log_func("[Web Search]Results:", results)
+        log_func('INFO', 'WebSearch', "Results:", results)
         await page.close()
 
         if not results:
@@ -179,7 +179,7 @@ async def bing_search(browser, query: str, max_results: int = 3):
         return results[:max_results]
 
     except Exception as e:
-        log_func(f"[Search Error] {str(e)}")
+        log_func('ERROR', 'WebSearch', f"Error: {str(e)}")
         return [f"Search failed: {str(e)}"]
     finally:
         if page and not page.isClosed():
@@ -250,12 +250,12 @@ async def get_webpage(browser, url, only_text=False, max_token=2048):
             text = tiktoken.encoding_for_model("gpt-3.5-turbo-1106").decode(tokens) + "\n\n[Text too long, truncated]"
         else:
             text = tiktoken.encoding_for_model("gpt-3.5-turbo-1106").decode(tokens)
-        log_func("[Web Search]Text:", text)
-        log_func("[Web Search]Token Size:", size)
+        log_func('INFO', 'WebSearch', "Text:", text)
+        log_func('INFO', 'WebSearch', "Token Size:", size)
         await page.close()
         return {"text": text, "size": size}
     except Exception as e:
-        log_func(traceback.format_exc())
+        log_func('ERROR', 'WebSearch', traceback.format_exc())
         return {"text": "ERROR", "size": 0}
 
 
@@ -321,7 +321,7 @@ def MarkdownRenderer(browser):
 
             def handleMatch(self, m):
                 try:
-                    log_func("[Pie Chart]", m.group(2))
+                    log_func('INFO', 'PieChart',  m.group(2))
                     data = m.group(2)
                     if not data or not data.strip():
                         return m.group(0)
@@ -450,7 +450,7 @@ def MarkdownRenderer(browser):
                     if remaining_blocks:
                         blocks.insert(0, remaining_blocks)
 
-                    log_func("[Wolfram Alpha]Query:", match.groups())
+                    log_func('INFO', 'WolframAlpha', "Query:", match.groups())
                     query = match.group(1)
                     try:
                         result = asyncio.run(wolfram_alpha.wolfram_alpha_compute(query))
@@ -459,7 +459,7 @@ def MarkdownRenderer(browser):
                         else:
                             html = asyncio.run(wolfram_alpha.format_to_HTML(result))
                     except:
-                        log_func(f"[Wolfram Alpha]Error: {traceback.format_exc()}")
+                        log_func('ERROR', 'WolframAlpha', f"Error: {traceback.format_exc()}")
                         html = """<div class="alert alert-warning" role="alert">No results</div>"""
 
                     replacement = f"\x02HTML:{len(html_replacements[-1])}\x03"
@@ -500,7 +500,7 @@ def MarkdownRenderer(browser):
                 return False
 
             def process_plot(self, match):
-                log_func("[Matplotlib Plot]Query:", match.groups())
+                log_func('INFO', 'MatplotlibPlot', "Query:", match.groups())
                 query = match.group(1)
                 try:
                     result, success = safe_python_executor.safe_exec(query)
@@ -508,7 +508,7 @@ def MarkdownRenderer(browser):
                         return f"""<div class="alert alert-warning" role="alert">{result}</div>"""
                     return f'<img src="data:image/png;base64,{result}" style="display: block; margin: 0 auto;">'
                 except:
-                    log_func(f"[Matplotlib Plot]Error: {traceback.format_exc()}")
+                    log_func('ERROR', 'MatplotlibPlot', f"Error: {traceback.format_exc()}")
                     return """<div class="alert alert-warning" role="alert">No results</div>"""
 
         class TableExtension(Extension):
@@ -554,13 +554,13 @@ def MarkdownRenderer(browser):
                 placeholder = f"\x02{{CODE_BLOCK_{i}}}\x03"
                 placeholders[placeholder] = code_block
                 text = text.replace(code_block, placeholder)
-            log_func("[Markdown Renderer]Text:", text)
+            log_func('INFO', 'MarkdownRenderer', "Text:", text)
             # 处理Matplot代码
             MATPLOT_RE = r'(?s)<matplotlib_plot>(.*?)</matplotlib_plot>'
             matplot_codes = re.findall(MATPLOT_RE, text)
             for i, code in enumerate(matplot_codes):
                 placeholder = f"\x02{{MATPLOT_{i}}}\x03"
-                log_func("[Markdown Renderer]Matplot:", code)
+                log_func('INFO', 'MarkdownRenderer', "Matplot:", code)
                 image_data, success = safe_python_executor.safe_exec(code)
                 if success:
                     image_base64 = base64.b64encode(image_data).decode()
@@ -572,7 +572,7 @@ def MarkdownRenderer(browser):
             TYPST_RE = r'(?s)<typst>(.*?)</typst>'
             typst_formulas = re.findall(TYPST_RE, text)
             for i, formula in enumerate(typst_formulas):
-                log_func("[Markdown Renderer]Typst:", formula)
+                log_func('INFO', 'MarkdownRenderer', "Typst:", formula)
                 placeholder = f"\x02{{TYPST_{i}}}\x03"
                 try:
                     image_data = typst_render.render(
@@ -595,7 +595,7 @@ def MarkdownRenderer(browser):
                     formula = formula__[0][7:-8]
                 else:
                     formula = formula__[0]
-                log_func("[Markdown Renderer]Formula:", formula)
+                log_func('INFO', 'MarkdownRenderer', "Formula:", formula)
                 formula_ = formula
                 # formula = re.sub(r'[^\x20-\x7E]', '', formula)
                 image_data = latex.get_formula_image_data(formula)
@@ -637,11 +637,11 @@ def MarkdownRenderer(browser):
             html_replacements.pop()
             return html
         except Exception as e:
-            log_func("[Markdown Renderer]Error:", str(e))
+            log_func('ERROR', 'MarkdownRenderer', "Error:", str(e))
             return f"<div class='alert alert-danger' role='alert'>Error: {str(e)}</div>"
 
     async def render(text):
-        log_func("[Markdown Renderer]Text:", text)
+        log_func('INFO', 'MarkdownRenderer', "Text:", text)
 
         def convert(text, queue):
             queue.put(convert_markdown_to_html(text))
@@ -913,14 +913,14 @@ def MarkdownRenderer(browser):
         ''')
         width = bounding_box["width"]
         height = bounding_box["height"]
-        log_func("[Markdown Renderer]Width:", width)
-        log_func("[Markdown Renderer]Height:", height)
+        log_func('INFO', 'MarkdownRenderer', "Width:", width)
+        log_func('INFO', 'MarkdownRenderer', "Height:", height)
         await page.setViewport({"width": int(width) + 1, "height": int(height) + 1})
         # save image to variable
         await page.waitForSelector("body")
         img = await page.screenshot()
         await page.close()
-        log_func("[Markdown Renderer]Image Size:", len(img))
+        log_func('INFO', 'MarkdownRenderer', "Image Size:", len(img))
         return img
 
     return render
