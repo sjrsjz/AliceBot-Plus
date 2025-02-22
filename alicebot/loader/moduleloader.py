@@ -10,7 +10,7 @@ import time
 class ModuleLoader:
     """模块热重载器，用于动态加载和重载Python模块"""
     
-    def __init__(self, module_dir: str):
+    def __init__(self, module_dir: str, log_func = print):
         """
         初始化模块加载器
         
@@ -27,7 +27,7 @@ class ModuleLoader:
         self._hot_reload_modules: Set[str] = set()  # 存储需要热重载的模块名称
         self._lock = threading.Lock()  # 添加线程锁
         self._lock_2 = threading.Lock()  # 添加线程锁
-
+        self._log_func = log_func
     def _get_module_path(self, module_name: str) -> Path:
         """获取模块文件的完整路径"""
         return self.module_dir / f"{module_name}.py"
@@ -48,10 +48,10 @@ class ModuleLoader:
                         current_mtime = self._get_module_modified_time(module_path)
                         if (module_name in self.last_modified and 
                             current_mtime > self.last_modified[module_name]):
-                            print(f"[🟨|ModuleLoader]Detected change in module {module_name}, reloading...", flush=True)
+                            self._log_func(f"[🟨|ModuleLoader]Detected change in module {module_name}, reloading...", flush=True)
                             self.load_module(module_name, hot_reload=True)
                     except Exception as e:
-                        print(f"[🟥|ModuleLoader]Error checking module {module_name}: {str(e)}")
+                        self._log_func(f"[🟥|ModuleLoader]Error checking module {module_name}: {str(e)}")
             
             time.sleep(self._watch_interval)
 
@@ -61,23 +61,23 @@ class ModuleLoader:
             self._should_stop.clear()
             self._watch_thread = threading.Thread(target=self._watch_for_changes, daemon=True)
             self._watch_thread.start()
-            print("[🟩|ModuleLoader]Started watching for module changes")
+            self._log_func("[🟩|ModuleLoader]Started watching for module changes")
 
     def stop_watching(self):
         """停止文件监控线程"""
         if self._watch_thread and self._watch_thread.is_alive():
             self._should_stop.set()
             self._watch_thread.join()
-            print("[🟧|ModuleLoader]Stopped watching for module changes")
+            self._log_func("[🟧|ModuleLoader]Stopped watching for module changes")
 
-    def load_module(self, module_name: str, hot_reload: bool = False, use_lock = False) -> Optional[Any]:
+    def load_module(self, module_name: str, hot_reload: bool = False, use_lock = False, **kwargs) -> Optional[Any]:
         """加载或重载一个模块"""
         with self._lock if use_lock else self._lock_2:
             try:
                 module_path = self._get_module_path(module_name)
                 
                 if not module_path.exists():
-                    print(f"[🟥|ModuleLoader]Module {module_name} not found at {module_path}")
+                    self._log_func(f"[🟥|ModuleLoader]Module {module_name} not found at {module_path}")
                     return None
 
                 if hot_reload:
@@ -99,23 +99,19 @@ class ModuleLoader:
                 # 为每个调用者创建独立的模块实例字典
                 if caller_id not in self.instances:
                     self.instances[caller_id] = {}
-                    
-                # # 创建唯一的模块名
-                # unique_module_name = f"{module_name}_{current_mtime}_{caller_id}"
-                
-                # # 清理旧的模块引用
-                # if unique_module_name in sys.modules:
-                #     del sys.modules[unique_module_name]
                 
                 # 重新加载模块
                 spec = importlib.util.spec_from_file_location(module_name, module_path)
                 if spec is None:
-                    print(f"[🟥|ModuleLoader]Failed to create module spec for {module_name}")
+                    self._log_func(f"[🟥|ModuleLoader]Failed to create module spec for {module_name}")
                     return None
                     
                 module = importlib.util.module_from_spec(spec)
                 sys.modules[module_name] = module
-                
+
+                for key, value in kwargs.items():
+                    setattr(module, key, value)
+
                 if spec.loader:
                     spec.loader.exec_module(module)
 
@@ -124,12 +120,16 @@ class ModuleLoader:
                 self.last_modified[module_name] = current_mtime
                 
                 action = "reloaded" if module_name in self.instances[caller_id] else "loaded"
-                print(f"[🟩|ModuleLoader]Successfully {action} module {module_name} for caller {caller_id}", flush=True)
+                self._log_func(f"[🟩|ModuleLoader]Successfully {action} module {module_name} for caller {caller_id}", flush=True)
                 
+                if hasattr(module, "on_load"):
+                    self._log_func(f"[🟩|ModuleLoader]Calling on_load for module {module_name}")
+                    module.on_load(**kwargs)
+
                 return module
 
             except Exception as e:
-                print(f"[🟥|ModuleLoader]Error loading module {module_name}: {str(e)}")
+                self._log_func(f"[🟥|ModuleLoader]Error loading module {module_name}: {str(e)}")
                 return None
     def get_module(self, module_name: str) -> Optional[Any]:
         """动态获取一个模块"""
@@ -137,6 +137,10 @@ class ModuleLoader:
         if caller_id in self.instances and module_name in self.instances[caller_id]:
             return self.instances[caller_id][module_name]
         return None
+    
+    def __getitem__(self, module_name: str) -> Optional[Any]:
+        return self.get_module(module_name)
+    
     def unload_module(self, module_name: str) -> bool:
         """卸载一个模块"""
         with self._lock:
@@ -149,7 +153,7 @@ class ModuleLoader:
                 self._hot_reload_modules.discard(module_name)  # 移除热重载监控
                 return True
             except Exception as e:
-                print(f"[🟥|ModuleLoader]Error unloading module {module_name}: {str(e)}")
+                self._log_func(f"[🟥|ModuleLoader]Error unloading module {module_name}: {str(e)}")
                 return False
     def unload_all_modules(self) -> bool:
         """卸载所有模块"""
@@ -159,17 +163,17 @@ class ModuleLoader:
                 self.instances[caller_id].clear()
             return True
         except Exception as e:
-            print(f"[🟥|ModuleLoader]Error unloading all modules: {str(e)}")
+            self._log_func(f"[🟥|ModuleLoader]Error unloading all modules: {str(e)}")
             return False
     def __del__(self):
         self.stop_watching()
         self.unload_all_modules()
-        print("[🟧|ModuleLoader]ModuleLoader destroyed")
+        self._log_func("[🟧|ModuleLoader]ModuleLoader destroyed")
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.stop_watching()
         self.unload_all_modules()
-        print("[🟧|ModuleLoader]ModuleLoader exited")
+        self._log_func("[🟧|ModuleLoader]ModuleLoader exited")
     def __enter__(self):
         return self
 

@@ -2,12 +2,17 @@ import base64
 import aiohttp
 import pathlib
 import sys
+
+from typing import Callable, Any
+log_func: Callable[[Any], None]
+
+
 project_root = str(pathlib.Path(__file__).parent.parent.parent)
 if project_root not in sys.path:
     sys.path.append(project_root)
 from loader import moduleloader
-aibackend_package = moduleloader.ModuleLoader(str(pathlib.Path(__file__).parent.parent.parent / "aibackend"))
-gemini = aibackend_package.load_module("gemini")
+aibackend_package = moduleloader.ModuleLoader(str(pathlib.Path(__file__).parent.parent.parent / "aibackend"), log_func=log_func)
+gemini = aibackend_package.load_module("gemini", log_func=log_func)
 async def encode_message_to_CQ(message):
     encoded_message = ""
     for x in message:

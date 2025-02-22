@@ -8,6 +8,9 @@ import regex
 import base64
 import traceback
 
+from typing import Callable, Any
+log_func: Callable[[Any], None]
+
 # 添加MiKTeX的路径
 __self_dir = os.path.dirname(os.path.abspath(__file__))
 __config_dir = os.path.join(__self_dir, "config")
@@ -42,7 +45,7 @@ class Config:
                     config.tex_path_mac = data.get("tex_path_mac", r"/Library/TeX/texbin/pdflatex")
                 return config
         except Exception as e:
-            print(f"[Config] Failed to load config: {e}")
+            log_func(f"[Config] Failed to load config: {e}")
             return cls()
 
 if not os.path.exists(__config_dir):
@@ -65,7 +68,7 @@ elif sys.platform == "darwin":
     tex_path = config.tex_path_mac
     os.environ["PATH"] += os.pathsep + os.path.dirname(tex_path)
 else:
-    print("Unknown platform")
+    log_func("Unknown platform")
     sys.exit(-1)
 
 matplotlib.rc("font",family='STSong') 
@@ -131,7 +134,7 @@ def get_formula_image_data(formula):
         image_data = buf.getvalue()
         buf.close()
     except:
-        traceback.print_exc()
+        log_func(f"[LaTeX]{traceback.format_exc()}")
         return None
     return image_data
 
@@ -156,7 +159,7 @@ def get_pie_chart_image_data(data, labels):
         image_data = buf.getvalue()
         buf.close()
     except:
-        traceback.print_exc()
+        log_func(f"[LaTeX]{traceback.format_exc()}")
         return None
     return image_data
 
@@ -173,7 +176,7 @@ def format_LaTeX_to_png_ws(text)->str:
         for m in re.finditer(text):
             formula = m.group()
             formula_ = formula
-            print("[LaTeX]",formula)
+            log_func("[LaTeX]",formula)
             mul_line = False
             while formula.startswith("$$"): # 将开头的$$换成$
                 formula = formula[1:]
@@ -192,7 +195,7 @@ def format_LaTeX_to_png_ws(text)->str:
                 image_base64 = base64.b64encode(image_data).decode()
                 result = result.replace(formula_, f" {formula_} \"Image_Base64:{image_base64}\" ")
     except:
-        traceback.print_exc()
+        log_func(f"[LaTeX]{traceback.format_exc()}")
         return text
     return result
 
@@ -208,34 +211,20 @@ def format_LaTeX_to_png_CQ(text)->str:
         for m in re.finditer(text):
             formula = m.group()
             formula_ = formula
-            print("[LaTeX]",formula)
-            mul_line = False
+            log_func("[LaTeX]",formula)
             while formula.startswith("$$"): # 将开头的$$换成$
                 formula = formula[1:]
-                mul_line = True
             while formula.endswith("$$"):
                 formula = formula[:-1]
-                mul_line = True
             if formula == "$":
                 continue
-            #if "\n" in formula and not mul_line:
             formula = formula.replace("\n", " ")
-            #if mul_line:
-                #formula = "$\n"+formula[1:-1]+"\n$"
+
             image_data = get_formula_image_data(formula)
             if image_data is not None:
                 image_base64 = base64.b64encode(image_data).decode()
                 result = result.replace(formula_, f" {formula_} [CQ:image,file=base64://{image_base64}] ")
     except:
-        traceback.print_exc()
+        log_func(f"[LaTeX]{traceback.format_exc()}")
         return text
     return result
-
-
-if __name__ == "__main__":
-    text = r"""
-    $$
-    a^2 + b^2 = c^2
-    $$
-    """
-    print(format_LaTeX_to_png_ws(text))

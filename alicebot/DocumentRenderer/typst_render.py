@@ -3,6 +3,9 @@ import sys
 import os
 import asyncio
 import time
+
+from typing import Callable, Any
+log_func: Callable[[Any], None]
 def render(typst_text: str) -> str:
     if sys.platform == 'win32':
         # Windows
@@ -15,7 +18,7 @@ def render(typst_text: str) -> str:
                 f.write(typst_text)
         except Exception as e:
             os.remove(tmp_file)
-            print("[Typst Renderer] Error:",e)
+            log_func("[Typst Renderer]Error:",e)
             raise e
         # render
         try:
@@ -23,7 +26,7 @@ def render(typst_text: str) -> str:
             os.remove(tmp_file)
         except Exception as e:
             os.remove(tmp_file)
-            print("[Typst Renderer] Error:",e)
+            log_func("[Typst Renderer]Error:",e)
             raise e
         # remove tmp file
         return img
@@ -40,7 +43,7 @@ def render(typst_text: str) -> str:
                 f.write(typst_text)
         except Exception as e:
             os.remove(tmp_file)
-            print("[Typst Renderer] Error:",e)
+            log_func("[Typst Renderer]Error:",e)
             raise e
         # render
         try:
@@ -48,7 +51,7 @@ def render(typst_text: str) -> str:
             os.remove(tmp_file)
         except Exception as e:
             os.remove(tmp_file)
-            print("[Typst Renderer] Error:",e)
+            log_func("[Typst Renderer]Error:",e)
             raise e
         return img
     else:

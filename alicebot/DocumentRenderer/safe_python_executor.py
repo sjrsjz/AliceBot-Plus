@@ -18,6 +18,10 @@ import random
 import datetime as dt
 import re
 
+
+from typing import Callable, Any
+log_func: Callable[[Any], None]
+
 # ----------------------
 # 跨平台初始化部分
 # ----------------------
@@ -144,5 +148,5 @@ def safe_exec(code: str, timeout: int = 30) -> tuple:
         return img_data, True
         
     except Exception as e:
-        traceback.print_exc()
+        log_func(f"[Python Executor]Error: {str(e)}")
         return f"系统错误: {str(e)}", False

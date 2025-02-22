@@ -1,8 +1,10 @@
 import asyncio
 import websockets
-
 import sys
 import pathlib
+
+from typing import Callable, Any
+log_func: Callable[[Any], None]
 
 
 project_root = str(pathlib.Path(__file__).parent.parent)
@@ -10,11 +12,11 @@ if project_root not in sys.path:
     sys.path.append(project_root)
 from loader import moduleloader
 
-onebot_package = moduleloader.ModuleLoader(str(pathlib.Path(__file__).parent.parent / "onebot"))
-onebot_api_module = onebot_package.load_module("api", hot_reload=True)
+onebot_package = moduleloader.ModuleLoader(str(pathlib.Path(__file__).parent.parent / "onebot"), log_func=log_func)
+onebot_api_module = onebot_package.load_module("api", hot_reload=True, log_func=log_func)
 
-message_codec_package = moduleloader.ModuleLoader(str(pathlib.Path(__file__).parent / "message"))
-message_codec = message_codec_package.load_module("codec")
+message_codec_package = moduleloader.ModuleLoader(str(pathlib.Path(__file__).parent / "message"), log_func=log_func)
+message_codec = message_codec_package.load_module("codec", log_func=log_func)
 
 class Bot:
     def __init__(self, echo_pool):
@@ -28,10 +30,12 @@ class Bot:
 
 
     async def receive_group_message(self, ws: websockets.WebSocketClientProtocol, message):
+        global log_func
+        log_func("[🟨|Bot]Received group message: ", message)
         if not self._test_if_being_at(message["message"]):
             return
 
-        api = onebot_package.get_module('api').OneBotAPI(self.echo_pool)
+        api = onebot_package['api'].OneBotAPI(self.echo_pool)
 
         group_id = message["group_id"]
         message = await message_codec.encode_message_to_CQ_without_At_self_and_Image(message["message"], self.bot_qq)

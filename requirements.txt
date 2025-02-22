@@ -21,3 +21,5 @@ simple-fjson
 
 asyncio
 aiohttp
+
+rich

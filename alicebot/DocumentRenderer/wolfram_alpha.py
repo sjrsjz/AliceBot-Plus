@@ -3,6 +3,9 @@ import websockets
 import json
 import base64
 
+from typing import Callable, Any
+log_func: Callable[[Any], None]
+
 async def wolfram_alpha_compute(query,image_only=False):
     q=[{"t":0,"v":query}]
     results=[]
@@ -19,9 +22,9 @@ async def wolfram_alpha_compute(query,image_only=False):
         await websocket.send(json.dumps(msg))
         response = json.loads(await websocket.recv())
         if "type" in response and response["type"]!="ready":
-            print("[Wolfram Alpha]Error:",response)
+            log_func("[Wolfram Alpha]Error:",response)
             return None
-        print("[Wolfram Alpha]Response:",response)
+        log_func("[Wolfram Alpha]Response:",response)
         msg={"type":"newQuery",
              "locationId":"oi8ft_en_light",
              "language":"en",
@@ -35,11 +38,10 @@ async def wolfram_alpha_compute(query,image_only=False):
              "apiParams":{},
              "file":None,
              "theme":"light"}
-        print("[Wolfram Alpha]Sending Query:",msg)
+        log_func("[Wolfram Alpha]Sending Query:",msg)
         await websocket.send(json.dumps(msg))
         while True:
             response = await websocket.recv()
-            #print("[Wolfram Alpha]Response:",response)
             json_=json.loads(response)
             if "type" in json_ and json_["type"]=="queryComplete":
                 break
@@ -64,7 +66,7 @@ async def wolfram_alpha_compute(query,image_only=False):
                     if "img" in subpods and "contenttype" in subpods["img"]:
                         data.update({"img_contenttype":subpods["img"]["contenttype"]})
                 results.append(data)
-    print("[Wolfram Alpha]Results:",results)
+    log_func("[Wolfram Alpha]Results:",results)
     return results
 
 async def wolfram_alpha_compute_without_image(query):
@@ -83,9 +85,9 @@ async def wolfram_alpha_compute_without_image(query):
         await websocket.send(json.dumps(msg))
         response = json.loads(await websocket.recv())
         if "type" in response and response["type"]!="ready":
-            print("[Wolfram Alpha]Error:",response)
+            log_func("[Wolfram Alpha]Error:",response)
             return None
-        print("[Wolfram Alpha]Response:",response)
+        log_func("[Wolfram Alpha]Response:",response)
         msg={"type":"newQuery",
              "locationId":"oi8ft_en_light",
              "language":"en",
@@ -99,11 +101,10 @@ async def wolfram_alpha_compute_without_image(query):
              "apiParams":{},
              "file":None,
              "theme":"light"}
-        print("[Wolfram Alpha]Sending Query:",msg)
+        log_func("[Wolfram Alpha]Sending Query:",msg)
         await websocket.send(json.dumps(msg))
         while True:
             response = await websocket.recv()
-            #print("[Wolfram Alpha]Response:",response)
             json_=json.loads(response)
             if "type" in json_ and json_["type"]=="queryComplete":
                 break
@@ -123,7 +124,7 @@ async def wolfram_alpha_compute_without_image(query):
                     if "moutput" in subpods:
                         data.update({"moutput":subpods["moutput"]})
                 results.append(data)
-    print("[Wolfram Alpha]Results:",results)
+    log_func("[Wolfram Alpha]Results:",results)
     return results
 
 async def format_to_mirai_ws(results):
