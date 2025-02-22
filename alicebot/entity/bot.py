@@ -17,7 +17,7 @@ onebot_package = moduleloader.ModuleLoader(str(pathlib.Path(__file__).parent.par
 onebot_api_module = onebot_package.load_module("api", hot_reload=True, log_func=log_func)
 
 message_codec_package = moduleloader.ModuleLoader(str(pathlib.Path(__file__).parent / "message"), log_func=log_func)
-message_codec = message_codec_package.load_module("codec", log_func=log_func)
+message_codec = message_codec_package.load_module("codec", hot_reload=True, log_func=log_func)
 
 from util.timeout import timeout
 
@@ -49,8 +49,8 @@ class Bot:
         async def reply():
             await asyncio.sleep(10) # Simulate a long-time operation
             group_id = message["group_id"]
-            message = await message_codec.encode_message_to_CQ_without_At_self_and_Image(message["message"], self.bot_qq)
-            await api.send_group_message(ws, group_id, await message_codec.decode_CQ_to_message(message))
+            message = await message_codec_package['codec'].encode_message_to_CQ_without_At_self_and_Image(message["message"], self.bot_qq)
+            await api.send_group_message(ws, group_id, await message_codec_package['codec'].decode_CQ_to_message(message))
         await reply()
 
     async def create(self, ws: websockets.WebSocketClientProtocol):

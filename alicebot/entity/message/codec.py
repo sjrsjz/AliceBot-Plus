@@ -12,7 +12,7 @@ if project_root not in sys.path:
     sys.path.append(project_root)
 from loader import moduleloader
 aibackend_package = moduleloader.ModuleLoader(str(pathlib.Path(__file__).parent.parent.parent / "aibackend"), log_func=log_func)
-gemini = aibackend_package.load_module("gemini", log_func=log_func)
+gemini = aibackend_package.load_module("gemini", hot_reload = True, log_func=log_func)
 async def encode_message_to_CQ(message):
     encoded_message = ""
     for x in message:
@@ -53,14 +53,14 @@ async def encode_message_to_CQ_without_At_self_and_Image(message, bot_qq):
                     img = x["data"]["base64"]
                     # decode
                     img = base64.b64decode(img)
-                    tag = await gemini.image_to_text(img)
+                    tag = await aibackend_package['gemini'].image_to_text(img)
                     encoded_message += f" <Image:prompt=\"{tag}\"> "
                 elif "url" in x["data"]:
                     url = x["data"]["url"]
                     async with aiohttp.ClientSession() as session:
                         async with session.get(url) as response:
                             img = await response.read()
-                    tag = await gemini.image_to_text(img)
+                    tag = await aibackend_package['gemini'].image_to_text(img)
                     encoded_message += f" <Image:prompt=\"{tag}\"> "
                 continue
             encoded_message += f"[CQ:{x['type']},"
