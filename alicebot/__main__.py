@@ -19,12 +19,15 @@ from loader import moduleloader
 from interface import TUI
 
 _log_func = print
+
+
 def log_func(text, *args, **kwargs):
     global _log_func
     if _log_func:
         _log_func(text, *args, **kwargs)
     else:
         print(text, *args, **kwargs)
+
 
 onebot_package = moduleloader.ModuleLoader(str(pathlib.Path(__file__).parent / "onebot"), log_func=log_func)
 onebot_api_module = onebot_package.load_module("api", hot_reload=True, log_func=log_func)
@@ -36,18 +39,21 @@ ws_url = "ws://192.168.31.116:8080"
 
 close_event = asyncio.Event()
 
+
 class ExitException(Exception):
     pass
+
 
 class Status:
     def __init__(self, loop=None):
         self.running_tasks = []
         self.cpu_percent = 0
         self.memory_percent = 0
-        self.start_time = time.time() 
+        self.start_time = time.time()
         self.task_count = 0
         self.loop = loop
         self.bot_tasks = []
+
     def update_task_count(self):
         # 获取当前事件循环
         # 获取所有正在运行的任务
@@ -55,7 +61,9 @@ class Status:
         # 过滤掉已完成的任务
         running_tasks = [task for task in all_tasks if not task.done()]
         self.task_count = len(running_tasks)
-async def process_message(ws, Bots, echo_pool, status:Status):
+
+
+async def process_message(ws, Bots, echo_pool, status: Status):
     while not close_event.is_set():
         try:
             message = json.loads(await ws.recv())
@@ -63,7 +71,7 @@ async def process_message(ws, Bots, echo_pool, status:Status):
             if "status" in message and "echo" in message:
                 echo_pool.echo_dict[message["echo"]] = message
                 continue
-                        
+
             if message["post_type"] == "meta_event" and message["meta_event_type"] == "heartbeat":
                 log_func("[🟧|Websocket]Received heartbeat")
                 continue
@@ -78,20 +86,21 @@ async def process_message(ws, Bots, echo_pool, status:Status):
                         "websocket": ws
                     }
                     status.bot_tasks.append(task_info)
+
                     def task_done_callback(task):
                         try:
                             # 获取任务结果，这会重新引发任何未处理的异常
                             task.result()
-                            
+
                             # 如果没有异常，记录成功信息
                             for idx in range(len(status.bot_tasks)):
                                 if status.bot_tasks[idx]["task"] == task:
-                                    log_func("[🟩|Task]Task completed:", 
-                                            status.bot_tasks[idx]['task'].get_name(), 
-                                            "Time:", time.time() - status.bot_tasks[idx]['start_time'])
+                                    log_func("[🟩|Task]Task completed:",
+                                             status.bot_tasks[idx]['task'].get_name(),
+                                             "Time:", time.time() - status.bot_tasks[idx]['start_time'])
                                     status.bot_tasks.pop(idx)
                                     break
-                                    
+
                         except asyncio.CancelledError:
                             log_func("[🟨|Task]Task was cancelled")
                         except Exception as e:
@@ -102,6 +111,7 @@ async def process_message(ws, Bots, echo_pool, status:Status):
                                 if status.bot_tasks[idx]["task"] == task:
                                     status.bot_tasks.pop(idx)
                                     break
+
                     task.add_done_callback(task_done_callback)
             else:
                 log_func("[🟥|Websocket]Unsupported message type: ", message)
@@ -113,10 +123,10 @@ async def process_message(ws, Bots, echo_pool, status:Status):
             await asyncio.sleep(1)
 
 
-
 global_websocket = None
-def init(status: Status):
 
+
+def init(status: Status):
     def update_status(width):
         text = Text()
         text.append("[Bot", "bold")
@@ -129,7 +139,7 @@ def init(status: Status):
         text.append("|", "bold")
         text.append(f"{hours:02d}:{minutes:02d}:{seconds:02d}", "bold green")
         text.append("]", "bold")
-        
+
         # 显示CPU信息
         text.append("[CPU ", "bold")
         if status.cpu_percent > 50:
@@ -138,7 +148,7 @@ def init(status: Status):
             text.append(f"{status.cpu_percent}%", "bold yellow")
         else:
             text.append(f"{status.cpu_percent}%", "bold green")
-        
+
         # 显示内存信息
         text.append(" MEM ", "bold")
         if status.memory_percent > 50:
@@ -148,7 +158,7 @@ def init(status: Status):
         else:
             text.append(f"{status.memory_percent}%", "bold green")
         text.append("]", "bold")
-        
+
         # 显示运行任务数
         text.append("[Tasks ", "bold")
         if status.task_count > 10:
@@ -158,9 +168,9 @@ def init(status: Status):
         else:
             text.append(f"{status.task_count}", "bold green")
         text.append("]", "bold")
-        
+
         return text
-    
+
     def close_server():
         close_event.set()
         log_func("[🟧|System]Received close signal")
@@ -168,6 +178,7 @@ def init(status: Status):
             global_websocket.transport.close()
 
     tui = TUI.RichTUI(update_status, close_server)
+
     def update_machine_status():
         while not tui.close_signal:
             status.cpu_percent = psutil.cpu_percent(interval=1)
@@ -184,8 +195,9 @@ def init(status: Status):
     return tui
 
 
-
 global_status = Status()
+
+
 async def server():
     global_status.loop = asyncio.get_event_loop()
     init(global_status)
@@ -238,27 +250,32 @@ async def server():
         await bot.destroy(ws)
     global _log_func
     _log_func = print
+
+
 async def cleanup():
     log_func("[🟧|System]Cleaning up...")
-    tasks = [task for task in asyncio.all_tasks() 
+    tasks = [task for task in asyncio.all_tasks()
              if task is not asyncio.current_task()]
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
     log_func("[🟧|System]Cleanup completed")
 
+
 def signal_handler():
     log_func("\n[🟧|System]Received shutdown signal")
     close_event.set()
 
+
 async def main():
     try:
-        
+
         await server()
     except Exception as e:
         log_func(f'[🟥|System]Error in main: {e}')
     finally:
         await cleanup()
+
 
 if __name__ == '__main__':
     try:
@@ -268,7 +285,7 @@ if __name__ == '__main__':
         else:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-        
+
         loop.run_until_complete(main())
     except KeyboardInterrupt:
         log_func("\n[🟥|System]KeyboardInterrupt received")
@@ -276,7 +293,7 @@ if __name__ == '__main__':
         pending = asyncio.all_tasks(loop=loop)
         for task in pending:
             task.cancel()
-        
+
         # 运行剩余任务直到完成
         loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
         loop.run_until_complete(loop.shutdown_asyncgens())

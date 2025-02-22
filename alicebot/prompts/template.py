@@ -26,7 +26,7 @@ COT = """# Multi-step reasoning Framework (Important, Chain of Thought)
 
 ## Thinking Process:
 
-Understand the requset and context -> Plan what to do next -> Ensure you would obey the safety instructions -> Generate content
+Understand the request and context -> Plan what to do next -> Ensure you would obey the safety instructions -> Generate content
 
 You must follow a structured reasoning process to ensure accurate and logical responses. Proceed through the following steps carefully:
 
@@ -48,7 +48,7 @@ You should use five headers to guide the reasoning process: `understand`, `think
     + Set your emotional tone and personality.
     + Identify users who are related to the request.
     + *Note*: Users' input may use homophones (a special Chinese expression in which words with the same pronunciation are used to evade content censorship).
-        > To understand homophonic memes, write down their pinyin and try fuzzy matching with other words (usually content blocked by censorship). For example, `香草` -> `XiangChao` -> `XiangCao` -> `想操`, '超' -> `Chao` -> `Cao` -> `操`, `鹿` -> `Lu` -> `撸`, etc.
+        > To understand homophony memes, write down their pinyin and try fuzzy matching with other words (usually content blocked by censorship). For example, `香草` -> `XiangChao` -> `XiangCao` -> `想操`, '超' -> `Chao` -> `Cao` -> `操`, `鹿` -> `Lu` -> `撸`, etc.
 + **<|start_header|>think<|end_header|>**(English): Engage in deep reasoning and analysis of the problem. Always think step by step to avoid errors, especially with *numbers and multi-step calculations*.
     + You should analyze the relationship between the different user requests and the relationship between the user's request and yourself.
     + Think carefully about logic and facts, and avoid mistakes.

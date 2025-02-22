@@ -10,6 +10,7 @@ import builtins
 import wcwidth as wcw
 import readchar
 
+
 class RichTUI:
 
     def __init__(self, status_bar_setter, server_close_event=None):
@@ -40,8 +41,6 @@ class RichTUI:
 
         self.server_close_event = server_close_event
 
-
-
     def get_index_which_wcswidth_less_than(self, string, width):
         index = 0
         sum_width = 0
@@ -51,6 +50,7 @@ class RichTUI:
                 break
             index = i
         return index
+
     def handle_print_buffer(self):
         # 处理print_buffer
         with self.print_lock:
@@ -76,6 +76,7 @@ class RichTUI:
         if self.log_index < 0:
             self.log_index -= len(self.log_buffer) - last_len
         self.log_index = max(min(self.log_index, 0), -len(self.log_buffer))
+
     def buffer_handler(self):
         while not self.close_signal:
             with self.buffer_handler_lock:
@@ -89,7 +90,7 @@ class RichTUI:
         buffer_thread.start()
         with Live(self.layout, console=self.console, refresh_per_second=10) as live:
             while not self.close_signal:
-                                 
+
                 self.max_x, self.max_y = self.console.size
                 # 显示日志
                 log_text = ""
@@ -99,7 +100,7 @@ class RichTUI:
                 with self.buffer_handler_lock:
                     tmp_buffer = self.log_buffer.copy()
                     tmp_log_index = self.log_index
-                
+
                 for i in range(self.log_area_y):
                     # 计算日志索引(log_index-log_height+i)对应的日志在log_buffer中的索引
                     log_buffer_index = len(tmp_buffer) + tmp_log_index - self.log_area_y + i
@@ -111,7 +112,8 @@ class RichTUI:
                     log_text += log_line + "\n"
                     line_idx += 1
 
-                self.log_area = Panel(Text(log_text), title="Log", width=self.max_x, height=self.max_y - 1, box=box.SQUARE, border_style="blue")
+                self.log_area = Panel(Text(log_text), title="Log", width=self.max_x, height=self.max_y - 1,
+                                      box=box.SQUARE, border_style="blue")
 
                 # 显示状态条
                 self.status_bar = self.status_bar_setter(self.max_x)
@@ -130,13 +132,12 @@ class RichTUI:
         if self.server_close_event is not None:
             self.server_close_event()
 
-
-
     def key_handler(self):
         def on_press(key):
-            with self.buffer_handler_lock:            
+            with self.buffer_handler_lock:
                 if key == readchar.key.UP or key == 'w':  # 向上滚动
-                    self.log_index = max(self.log_index - self.log_area_y // 3 - 1, -len(self.log_buffer) + self.log_area_y)
+                    self.log_index = max(self.log_index - self.log_area_y // 3 - 1,
+                                         -len(self.log_buffer) + self.log_area_y)
                 elif key == readchar.key.DOWN or key == 's':  # 向下滚动
                     self.log_index = min(self.log_index + self.log_area_y // 3 - 1, 0)
                 elif key == readchar.key.PAGE_UP:  # 向上翻页
@@ -145,6 +146,7 @@ class RichTUI:
                     self.log_index = min(self.log_index + self.log_area_y, 0)
                 elif key == readchar.key.SPACE:
                     self.log_index = 0
+
         while True:
             try:
                 key = readchar.readkey()
@@ -153,7 +155,6 @@ class RichTUI:
                 self.close_signal = True
                 print("[Waring]Close signal received")
                 break
-
 
     def print(self, *args, **kwargs):
         with self.print_lock:
@@ -186,7 +187,7 @@ class RichTUI:
             self.close_signal = True
             self.tui_thread.join()
 
-    
+
 def run_TUI(bar_setter):
     global tui
     tui = RichTUI(bar_setter)
@@ -194,21 +195,24 @@ def run_TUI(bar_setter):
     tui.run()
     tui.cleanup()
 
+
 def stop_TUI():
     global tui
     if tui is not None:
         tui.cleanup()
 
+
 tui_thread = None
+
 
 def run_TUI_thread(bar_setter):
     global tui_thread
     tui_thread = threading.Thread(target=run_TUI, args=(bar_setter,))
     tui_thread.start()
 
+
 def stop_TUI_thread():
     global tui_thread
     if tui_thread is not None:
         stop_TUI()
         tui_thread.join()
-
