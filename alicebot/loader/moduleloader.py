@@ -30,6 +30,7 @@ class ModuleLoader:
         self._lock = threading.Lock()  # 添加线程锁
         self._lock_2 = threading.Lock()  # 添加线程锁
         self._log_func = log_func
+        self.kwargs = {}
 
     def _get_module_path(self, module_name: str) -> Path:
         """获取模块文件的完整路径"""
@@ -54,7 +55,7 @@ class ModuleLoader:
                                 current_mtime > self.last_modified[module_name]):
                             self._log_func(f"[🟨|ModuleLoader]Detected change in module {module_name}, reloading...",
                                            flush=True)
-                            self.load_module(module_name, hot_reload=True)
+                            self.load_module(module_name, hot_reload=True, **self.kwargs)
                     except Exception as e:
                         self._log_func(f"[🟥|ModuleLoader]Error checking module {module_name}: {str(e)}")
 
@@ -77,6 +78,7 @@ class ModuleLoader:
 
     def load_module(self, module_name: str, hot_reload: bool = False, use_lock=False, **kwargs) -> Optional[Any]:
         """加载或重载一个模块"""
+        self.kwargs = kwargs
         with self._lock if use_lock else self._lock_2:
             try:
                 module_path = self._get_module_path(module_name)
