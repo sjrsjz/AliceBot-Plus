@@ -12,20 +12,22 @@
 ## 🔧功能
 - [x] 通过 **OneBot v11** 标准接收和发送消息
 - [x] NapCatQQ Websocket API支持
-- [x] 多种消息类型
+- [x] 编解码CQ码
 - [x] 群聊消息处理
 - [x] 自身局部代码热重载
+- [x] 基于 Rich 库的可交互 TUI
 - [x] 高度可扩展定制化AI提示词模板
 - [x] AI 格式化富文本输出，CoT推理
 - [x] 文档渲染器 (支持 Markdown/HTML/LaTeX/Typst，基于无头浏览器)
 - [x] 网页搜索、读取解析
-- [ ] 插件系统 (仍未完成迁移)
+- [x] 插件系统
 - [ ] 上下文管理器 (仍未完成迁移)
 - [ ] AI 模型支持 (仍未完成迁移)
 - [ ] 复杂指令解析 (仍未完成迁移)
 - [ ] 私聊消息处理 
 
 ## 🚀快速开始
+### 运行
 由于项目采用 Python 包的方式进行源代码组织，因此建议使用以下方式进行运行：
 
 ```bash
@@ -39,6 +41,100 @@ pip install -r requirements.txt
 python -m alicebot
 ```
 
+### 配置文件
+`plugins/meta.json` 是插件的元数据文件，用于描述插件的基本状态和信息。在插件加载时，会读取该文件进行插件权限和启用状态的判断。
+
+```json
+{
+    "meta": {
+        "test": { // 插件名（文件名）
+            "active": 1, // 是否启用
+            "permission": 0 // 权限等级, 0 为所有人可用, 1 为Bot管理员可用
+        },
+        "help": {
+            "active": 1,
+            "permission": 0
+        }
+    }
+}
+```
+`config/config.json` 是配置文件，用于配置机器人的基本信息。
+
+```json
+{
+    "admins": [] // 管理员QQ号
+}
+```
+
+## 📦插件
+插件是 AliceBot+ 的核心功能，通过插件可以实现机器人的各种功能。插件的基本结构如下：
+
+```python
+from typing import Callable, Any
+log_func: Callable[[Any], None] # 日志记录函数
+plugin_context: Any # 插件上下文，由插件管理器传入
+
+'''
+# 插件上下文定义
+class PluginContext:
+    def __init__(self, bot_entity, plugin_meta, Skip, SkipFollow, timeout, echo_pool, onebot_package_path = onebot_package_path, message_codec_package_path = message_codec_package_path):
+        self.bot_entity = bot_entity # 机器人实体
+        self.plugin_meta = plugin_meta # 插件元数据
+        self.Skip = Skip # 跳过当前插件的执行（raise Skip）
+        self.SkipFollow = SkipFollow # 跳过当前插件的后续插件的执行（raise SkipFollow）
+        self.timeout = timeout # 超时装饰器
+        self.echo_pool = echo_pool # 消息回显池
+        self.onebot_package_path = onebot_package_path # OneBotAPI包路径
+        self.message_codec_package_path = message_codec_package_path # 消息编解码包路径
+'''
+
+
+from loader import moduleloader # 热重载器，用于加载模块
+
+
+onebot_package = moduleloader.ModuleLoader(plugin_context.onebot_package_path, log_func=log_func) # 加载OneBotAPI包
+onebot_package.load_module("api", hot_reload=True, log_func=log_func) # 加载OneBot API模块
+
+message_codec_package = moduleloader.ModuleLoader(plugin_context.message_codec_package_path, log_func=log_func) # 加载消息编解码包
+message_codec_package.load_module("codec", hot_reload=True, log_func=log_func) # 加载消息编解码模块
+
+
+log_func('INFO', 'TEST', r'''
+This is a test plugin for AliceBot+.
+''') # 记录日志
+
+class Plugin: # 插件类（必须）
+    @staticmethod
+    def create(): # 插件创建时调用
+        log_func('INFO', 'TEST', "Plugin created.")
+
+    @staticmethod
+    def destroy(): # 插件销毁时调用
+        log_func('INFO', 'TEST', "Plugin destroyed.")
+
+    @staticmethod
+    def before_reload(): # 插件热重载前调用
+        log_func('INFO', 'TEST', "Plugin before reload.")
+
+    @staticmethod
+    def after_reload(): # 插件热重载后调用
+        log_func('INFO', 'TEST', "Plugin after reload.")
+
+    @staticmethod
+    async def on_group_message(ws, message): # 群聊消息处理
+        api = onebot_package['api'].OneBotAPI(plugin_context.echo_pool) # 获取OneBot API实例
+        async def timeout_callback(): # 超时回调
+            pass
+
+        @plugin_context.timeout(5, timeout_callback=timeout_callback) # 设置超时时间（秒）和超时回调
+        async def handler(): # 消息处理
+            encoded_message = await message_codec_package['codec'].encode_message_to_CQ(message["message"]) # 编码消息到CQ码
+            if "test" in encoded_message:
+                await api.send_group_message(ws, message["group_id"], message=encoded_message) # 发送群消息
+            
+        await handler() # 调用消息处理
+
+```
 
 ## 📜 开源许可
 本项目采用 [MIT](LICENSE) 开源许可证。
