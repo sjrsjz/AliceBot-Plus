@@ -4,10 +4,8 @@ import sys
 import os
 import pathlib
 import fJson as fjson
-import enum
 
 from typing import Callable, Any
-
 log_func: Callable[[Any], None]
 
 project_root = str(pathlib.Path(__file__).parent.parent)
@@ -15,107 +13,240 @@ if project_root not in sys.path:
     sys.path.append(project_root)
 from loader import moduleloader
 
-onebot_package = moduleloader.ModuleLoader(str(pathlib.Path(__file__).parent.parent / "onebot"), log_func=log_func)
+onebot_package_path = pathlib.Path(__file__).parent.parent / "onebot"
+message_codec_package_path = pathlib.Path(__file__).parent / "message"
+
+onebot_package = moduleloader.ModuleLoader(str(onebot_package_path), log_func=log_func)
 onebot_api_module = onebot_package.load_module("api", hot_reload=True, log_func=log_func)
 
-message_codec_package = moduleloader.ModuleLoader(str(pathlib.Path(__file__).parent / "message"), log_func=log_func)
+message_codec_package = moduleloader.ModuleLoader(str(message_codec_package_path), log_func=log_func)
 message_codec = message_codec_package.load_module("codec", hot_reload=True, log_func=log_func)
 
 from util.timeout import timeout
 
-plugin_dir = pathlib.Path(__file__).parent.parent / "plugin"
-plugin_package = moduleloader.ModuleLoader(str(plugin_dir), log_func=log_func) # Import the plugin package
 
-if not plugin_dir.exists():
-    plugin_dir.mkdir()
-# 枚举所有插件
-plugin_names = [x for x in os.listdir(str(plugin_dir)) if '.py' in x]
-
-
-class PluginStatus(enum.Enum):
-    ACTIVE = 1
-    INACTIVE = 0
-
-class PluginPermission(enum.Enum):
-    ADMIN = 1
-    USER = 0
-
-
-meta_path = plugin_dir / "meta.json"
-
-@fjson.DataClass
-class PluginMeta:
-    def __init__(self, meta = {}):
-        self.meta = meta
-    def activate_plugin(self, plugin_name, meta_path = meta_path):
-        self.meta[plugin_name]['active'] = PluginStatus.ACTIVE
-        self.save(meta_path=meta_path)
-
-    def deactivate_plugin(self, plugin_name, meta_path = meta_path):
-        self.meta[plugin_name]['active'] = PluginStatus.INACTIVE
-        self.save(meta_path=meta_path)
-
-    def set_plugin_permission(self, plugin_name, permission, meta_path = meta_path):
-        self.meta[plugin_name]['permission'] = permission
-        self.save(meta_path=meta_path)
-
-    def get_plugin_permission(self, plugin_name, meta_path = meta_path):
-        return self.meta.get(plugin_name, {}).get('permission', PluginPermission.USER)    
-    def get_plugin_status(self, plugin_name, meta_path = meta_path):
-        return self.meta.get(plugin_name, {}).get('active', PluginStatus.INACTIVE)
-    
-    def save(self, meta_path = meta_path):
-        with open(meta_path, 'w', encoding='utf-8') as f:
-            f.write(self.json(indent=4, multi_line=True))
-
-    def load(self, meta_path = meta_path):
-        with open(meta_path, 'r', encoding='utf-8') as f:
-            self.load_json(f.read())
-
-plugin_meta = PluginMeta()
-if not meta_path.exists():
-    plugin_meta.save()
-else:
-    plugin_meta.load()
-
-log_func("[🟨|Bot]Plugin meta:", plugin_meta.json())
 class Bot:
+
+    class PluginStatus:
+        ACTIVE = 1
+        INACTIVE = 0
+
+    class PluginPermission:
+        ADMIN = 1
+        USER = 0
+
+    class Skip(Exception): # 跳过当前插件
+        pass
+    class SkipFollow(Exception): # 跳过当前插件的后续插件
+        pass
     def __init__(self, echo_pool):
         self.bot_qq = None
         self.echo_pool = echo_pool
-
+        self.plugin_meta = None
+        self.plugin_dir = pathlib.Path(__file__).parent.parent / "plugin"
+        self.plugin_package = None
+        self.admins = []
+        self.bot_config_path = pathlib.Path(__file__).parent.parent / "config"
+        self.sudo_command_trigger = "#sudo"
     def _test_if_being_at(self, message):
         for x in message:
             if x["type"] == "at" and x["data"]["qq"] == str(self.bot_qq):
                 return True
         return False
 
-    async def receive_group_message(self, ws: websockets.WebSocketClientProtocol, message):
-        global log_func
-        if not self._test_if_being_at(message["message"]):
+    async def sudo_command(self, ws: websockets.WebSocketClientProtocol, command: str, message_sender_func, sender):
+        command = command.strip()
+        if not command.startswith(self.sudo_command_trigger):
             return
-        log_func("[🟨|Bot]Received group message: ", message)
+        if not sender["user_id"] in self.admins:
+            await message_sender_func("Permission denied.")
+            log_func("[🟥|Bot]Permission denied for sudo command:", command, "because", sender["user_id"], "is not in the admin list.")
+            return
+        command = command.replace(self.sudo_command_trigger, "", 1).strip()
+        log_func("[🟨|Bot]Received sudo command:", command)
+
+        try:
+            command_json = fjson.decode(command) # 解析json
+        except Exception as e:
+            log_func("[🟥|Bot]Failed to parse command:", e)
+            await message_sender_func("Failed to parse command.")
+            raise Exception("#sudo command is invalid: " + command)
+        try:
+            # 检查是否包含 --plugin 参数
+            if "plugin" in command_json:
+                log_text = ""
+                if "enable" in command_json:
+                    for plugin_name in command_json["enable"]:
+                        log_func("[🟨|Bot]Enable plugin:", plugin_name)
+                        self.plugin_meta.activate_plugin(plugin_name)
+                        log_text += f"Enabled plugin: {plugin_name}\n"
+                if "disable" in command_json:
+                    for plugin_name in command_json["disable"]:
+                        log_func("[🟨|Bot]Disable plugin:", plugin_name)
+                        self.plugin_meta.deactivate_plugin(plugin_name)
+                        log_text += f"Disabled plugin: {plugin_name}\n"
+                await message_sender_func(log_text.strip())
+                return
+            
+            await message_sender_func("Unknown command.")
+            raise Exception("#sudo command is invalid: " + command)
+        except Exception as e:
+            log_func("[🟥|Bot]Error in sudo command:", e)
+            await message_sender_func("Error in sudo command.")
+            raise e
+    async def receive_group_message(self, ws: websockets.WebSocketClientProtocol, message):
+        # 遍历所有插件
+        for plugin_name, plugin in self.plugin_package.get_all_modules().items():
+            if self.plugin_meta.get_plugin_status(plugin_name) == Bot.PluginStatus.INACTIVE:
+                continue
+            if self.plugin_meta.get_plugin_permission(plugin_name) == Bot.PluginPermission.ADMIN:
+                if not message["sender"]["user_id"] in self.admins:
+                    continue
+            try:
+                await plugin.Plugin.on_group_message(ws, message)
+            except Bot.Skip:
+                continue
+            except Bot.SkipFollow:
+                return # 跳过后续插件以及默认回复
+            except Exception as e:
+                log_func("[🟥|Bot]Error in plugin", plugin_name, ":", e)
 
         api = onebot_package['api'].OneBotAPI(self.echo_pool)
 
-        async def timeout_callback():
-            group_id = message["group_id"]
-            await api.send_group_message(ws, group_id, "Timeout!")
-            raise asyncio.TimeoutError("Timeout!")
-
-        @timeout(5, timeout_callback)
-        async def reply():
-            await asyncio.sleep(10)  # Simulate a long-time operation
-            group_id = message["group_id"]
-            message = await message_codec_package['codec'].encode_message_to_CQ_without_At_self_and_Image(
-                message["message"], self.bot_qq)
-            await api.send_group_message(ws, group_id,
-                                         await message_codec_package['codec'].decode_CQ_to_message(message))
-
-        await reply()
+        message_str = await message_codec_package['codec'].encode_message_to_CQ_without_At_self_and_Image_tag(message["message"], self.bot_qq)
+        await self.sudo_command(ws, message_str, lambda x: api.send_group_message(ws, message["group_id"], x), message["sender"])
 
     async def create(self, ws: websockets.WebSocketClientProtocol):
-        pass
+        log_func("[🟨|Bot]Creating bot entity...")
+        self.plugin_package = moduleloader.ModuleLoader(str(self.plugin_dir), log_func=log_func) # Import the plugin package
+
+        if not self.plugin_dir.exists():
+            self.plugin_dir.mkdir()
+        # 枚举所有插件
+        plugin_names = [x for x in os.listdir(str(self.plugin_dir)) if '.py' in x]
+
+        meta_path = self.plugin_dir / "meta.json"
+
+        @fjson.DataClass
+        class PluginMeta:
+            def __init__(self, meta = {}):
+                self.meta = meta.copy()
+                pass
+            def activate_plugin(self, plugin_name, meta_path = meta_path):
+                self.meta[plugin_name]['active'] = Bot.PluginStatus.ACTIVE
+                self.save(meta_path=meta_path)
+
+            def deactivate_plugin(self, plugin_name, meta_path = meta_path):
+                self.meta[plugin_name]['active'] = Bot.PluginStatus.INACTIVE
+                self.save(meta_path=meta_path)
+
+            def set_plugin_permission(self, plugin_name, permission, meta_path = meta_path):
+                self.meta[plugin_name]['permission'] = permission
+                self.save(meta_path=meta_path)
+
+            def get_plugin_permission(self, plugin_name, meta_path = meta_path):
+                return self.meta.get(plugin_name, {}).get('permission', Bot.PluginPermission.USER)    
+            def get_plugin_status(self, plugin_name, meta_path = meta_path):
+                return self.meta.get(plugin_name, {}).get('active', Bot.PluginStatus.INACTIVE)
+            
+            def save(self, meta_path = meta_path):
+                with open(meta_path, 'w', encoding='utf-8') as f:
+                    f.write(self.json(indent=4, multi_line=True))
+
+            def load(self, meta_path = meta_path):
+                with open(meta_path, 'r', encoding='utf-8') as f:
+                    loaded = self.load_json(f.read())
+                    self.meta = loaded.meta
+
+        self.plugin_meta = PluginMeta()
+        if not meta_path.exists():
+            self.plugin_meta.save()
+        else:
+            try:
+                self.plugin_meta.load()
+            except Exception as e:
+                log_func("[🟥|Bot]Failed to load plugin meta:", e)
+                log_func("[🟨|Bot]Creating a new plugin meta file...")
+                self.plugin_meta = PluginMeta()
+                self.plugin_meta.save()
+
+
+        log_func("[🟨|Bot]Plugin meta:", self.plugin_meta.json())
+
+        for plugin_name in plugin_names:
+            # 移除文件后缀
+            plugin_name = plugin_name.split('.')[0]
+            if plugin_name not in self.plugin_meta.meta:
+                self.plugin_meta.meta[plugin_name] = {'active': Bot.PluginStatus.INACTIVE, 'permission': Bot.PluginPermission.USER}
+        self.plugin_meta.save()
+
+        # 装载所有插件
+        for plugin_name in plugin_names:
+            # 移除文件后缀
+            plugin_name = plugin_name.split('.')[0]
+            self.plugin_package.load_module(plugin_name, hot_reload=True, log_func=log_func, 
+                                            bot_entity=self, # 传入bot实体
+                                            onebot_package_path=onebot_package_path, # 传入onebot包路径
+                                            message_codec_package_path=message_codec_package_path, # 传入message_codec包路径
+                                            Skip=self.Skip, # 传入Skip异常
+                                            SkipFollow=self.SkipFollow, # 传入SkipFollow异常
+                                            timeout=timeout, # 传入timeout装饰器
+                                            echo_pool=self.echo_pool # 传入echo_pool
+                                            )
+        for plugin_name, plugin in self.plugin_package.get_all_modules().items():
+            try:
+                log_func("[🟨|Bot]Initializing plugin:", plugin_name)
+                await plugin.Plugin.create()
+                log_func("[🟩|Bot]Plugin", plugin_name, "initialized.")
+            except Exception as e:
+                log_func("[🟥|Bot]Initialize plugin", plugin_name, "failed:", e)
+
+        @fjson.DataClass
+        class BotConfig:
+            def __init__(self):
+                self.admins = []
+
+            def save(self, path: str):
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(self.json(indent=4, multi_line=True))
+
+            @classmethod
+            def load(cls, path: str):
+                if not os.path.exists(path):
+                    return cls()
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        data = fjson.decode(f.read())
+                        config = cls()
+                        if data:
+                            config.admins = data.get("admins", [])
+                        return config
+                except Exception as e:
+                    log_func(f"[BotConfig] Failed to load config: {e}")
+                    return cls()
+                
+        self.bot_config_path = pathlib.Path(__file__).parent.parent / "config"
+        if not self.bot_config_path.exists():
+            self.bot_config_path.mkdir()
+        self.bot_config_path = self.bot_config_path / "bot_config.json"
+        if not self.bot_config_path.exists():
+            with open(self.bot_config_path, "w", encoding="utf-8") as f:
+                f.write(BotConfig().json(indent=4, multi_line=True))
+        self.bot_config = BotConfig.load(self.bot_config_path)
+        self.admins = self.bot_config.admins
+
+        log_func("[🟩|Bot]Bot entity created.")
 
     async def destroy(self, ws: websockets.WebSocketClientProtocol):
-        pass
+        log_func("[🟨|Bot]Destroying bot entity...")
+        for plugin_name, plugin in self.plugin_package.get_all_modules().items():
+            try:
+                log_func("[🟨|Bot]Destroying plugin:", plugin_name)
+                await plugin.Plugin.destroy()
+                log_func("[🟩|Bot]Plugin", plugin_name, "destroyed")
+            except Exception as e:
+                log_func("[🟥|Bot]Destroy plugin", plugin_name, "failed:", e)
+        self.plugin_package = None
+        self.plugin_meta.save()
+        self.plugin_meta = None
+        log_func("[🟩|Bot]Bot entity destroyed.")

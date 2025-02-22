@@ -146,6 +146,11 @@ class ModuleLoader:
         if caller_id in self.instances and module_name in self.instances[caller_id]:
             return self.instances[caller_id][module_name]
         return None
+    
+    def get_all_modules(self) -> Dict[str, Any]:
+        """获取所有模块"""
+        caller_id = str(id(self))
+        return self.instances.get(caller_id, {})
 
     def __getitem__(self, module_name: str) -> Optional[Any]:
         return self.get_module(module_name)

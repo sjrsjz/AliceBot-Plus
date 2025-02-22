@@ -173,6 +173,8 @@ def init(status: Status):
 
     def close_server():
         close_event.set()
+        global _log_func
+        _log_func = print
         log_func("[🟧|System]Received close signal")
         if global_websocket:
             global_websocket.transport.close()
@@ -248,8 +250,7 @@ async def server():
     echo_pool.close_event.set()
     for bot in Bots:
         await bot.destroy(ws)
-    global _log_func
-    _log_func = print
+
 
 
 async def cleanup():
