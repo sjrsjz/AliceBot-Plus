@@ -184,15 +184,18 @@ class Bot:
         for plugin_name in plugin_names:
             # 移除文件后缀
             plugin_name = plugin_name.split('.')[0]
-            self.plugin_package.load_module(plugin_name, hot_reload=True, log_func=log_func, 
-                                            bot_entity=self, # 传入bot实体
-                                            onebot_package_path=onebot_package_path, # 传入onebot包路径
-                                            message_codec_package_path=message_codec_package_path, # 传入message_codec包路径
-                                            Skip=self.Skip, # 传入Skip异常
-                                            SkipFollow=self.SkipFollow, # 传入SkipFollow异常
-                                            timeout=timeout, # 传入timeout装饰器
-                                            echo_pool=self.echo_pool # 传入echo_pool
-                                            )
+            class PluginContext:
+                def __init__(self, bot_entity, plugin_meta, Skip, SkipFollow, timeout, echo_pool, onebot_package_path = onebot_package_path, message_codec_package_path = message_codec_package_path):
+                    self.bot_entity = bot_entity
+                    self.plugin_meta = plugin_meta
+                    self.Skip = Skip
+                    self.SkipFollow = SkipFollow
+                    self.timeout = timeout
+                    self.echo_pool = echo_pool
+                    self.onebot_package_path = onebot_package_path
+                    self.message_codec_package_path = message_codec_package_path
+            self.plugin_package.load_module(plugin_name, hot_reload=True, log_func=log_func, plugin_context=PluginContext(self, self.plugin_meta, self.Skip, self.SkipFollow, timeout, self.echo_pool, onebot_package_path, message_codec_package_path))
+
         for plugin_name, plugin in self.plugin_package.get_all_modules().items():
             try:
                 log_func("[🟨|Bot]Initializing plugin:", plugin_name)
