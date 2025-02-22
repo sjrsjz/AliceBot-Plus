@@ -7,7 +7,7 @@ from typing import Optional
 import copy
 import threading
 import time
-import math
+import traceback
 import psutil
 from rich.text import Text
 
@@ -39,8 +39,23 @@ close_event = asyncio.Event()
 class ExitException(Exception):
     pass
 
-
-async def process_message(ws, Bots, echo_pool):
+class Status:
+    def __init__(self, loop=None):
+        self.running_tasks = []
+        self.cpu_percent = 0
+        self.memory_percent = 0
+        self.start_time = time.time() 
+        self.task_count = 0
+        self.loop = loop
+        self.bot_tasks = []
+    def update_task_count(self):
+        # 获取当前事件循环
+        # 获取所有正在运行的任务
+        all_tasks = asyncio.all_tasks(self.loop)
+        # 过滤掉已完成的任务
+        running_tasks = [task for task in all_tasks if not task.done()]
+        self.task_count = len(running_tasks)
+async def process_message(ws, Bots, echo_pool, status:Status):
     while not close_event.is_set():
         try:
             message = json.loads(await ws.recv())
@@ -50,13 +65,44 @@ async def process_message(ws, Bots, echo_pool):
                 continue
                         
             if message["post_type"] == "meta_event" and message["meta_event_type"] == "heartbeat":
-                log_func("[🟨|Websocket]Received heartbeat")
+                log_func("[🟧|Websocket]Received heartbeat")
                 continue
-            #print("[🟨|Websocket]Received message: ", message)
             if message["post_type"] == "message" and message["message_type"] == "group":
                 for bot in Bots:
-                    # 改用 asyncio.ensure_future 替代 create_task
-                    asyncio.ensure_future(bot.receive_group_message(ws, copy.deepcopy(message)))
+                    task = asyncio.create_task(bot.receive_group_message(ws, copy.deepcopy(message)))
+                    task_info = {
+                        "task": task,
+                        "bot": bot,
+                        "message": copy.deepcopy(message),
+                        "start_time": time.time(),
+                        "websocket": ws
+                    }
+                    status.bot_tasks.append(task_info)
+                    def task_done_callback(task):
+                        try:
+                            # 获取任务结果，这会重新引发任何未处理的异常
+                            task.result()
+                            
+                            # 如果没有异常，记录成功信息
+                            for idx in range(len(status.bot_tasks)):
+                                if status.bot_tasks[idx]["task"] == task:
+                                    log_func("[🟩|Task]Task completed:", 
+                                            status.bot_tasks[idx]['task'].get_name(), 
+                                            "Time:", time.time() - status.bot_tasks[idx]['start_time'])
+                                    status.bot_tasks.pop(idx)
+                                    break
+                                    
+                        except asyncio.CancelledError:
+                            log_func("[🟨|Task]Task was cancelled")
+                        except Exception as e:
+                            log_func("[🟥|Task]Task failed with error:", e, '\n' + traceback.format_exc())
+                        finally:
+                            # 确保任务从列表中移除
+                            for idx in range(len(status.bot_tasks)):
+                                if status.bot_tasks[idx]["task"] == task:
+                                    status.bot_tasks.pop(idx)
+                                    break
+                    task.add_done_callback(task_done_callback)
             else:
                 log_func("[🟥|Websocket]Unsupported message type: ", message)
         except websockets.exceptions.ConnectionClosedError:
@@ -66,18 +112,25 @@ async def process_message(ws, Bots, echo_pool):
             log_func("[🟥|Websocket]Error in message processor: ", e)
             await asyncio.sleep(1)
 
-class Status:
-    def __init__(self):
-        self.running_tasks = []
-        self.cpu_percent = 0
-        self.memory_percent = 0
+
 
 global_websocket = None
-def init(status: Status, loop):
+def init(status: Status):
 
     def update_status(width):
         text = Text()
-        text.append("[Bot]", "bold")
+        text.append("[Bot", "bold")
+
+        # 计算并显示运行时间
+        uptime = time.time() - status.start_time
+        hours = int(uptime // 3600)
+        minutes = int((uptime % 3600) // 60)
+        seconds = int(uptime % 60)
+        text.append("|", "bold")
+        text.append(f"{hours:02d}:{minutes:02d}:{seconds:02d}", "bold green")
+        text.append("]", "bold")
+        
+        # 显示CPU信息
         text.append("[CPU ", "bold")
         if status.cpu_percent > 50:
             text.append(f"{status.cpu_percent}%", "bold red")
@@ -85,6 +138,8 @@ def init(status: Status, loop):
             text.append(f"{status.cpu_percent}%", "bold yellow")
         else:
             text.append(f"{status.cpu_percent}%", "bold green")
+        
+        # 显示内存信息
         text.append(" MEM ", "bold")
         if status.memory_percent > 50:
             text.append(f"{status.memory_percent}%", "bold red")
@@ -92,23 +147,18 @@ def init(status: Status, loop):
             text.append(f"{status.memory_percent}%", "bold yellow")
         else:
             text.append(f"{status.memory_percent}%", "bold green")
-        text.append("]Running Tasks [", "bold")
-        if len(status.running_tasks) > 5:
-            text.append(f"{len(status.running_tasks)}", "bold red")
-        elif len(status.running_tasks) > 3:
-            text.append(f"{len(status.running_tasks)}", "bold yellow")
+        text.append("]", "bold")
+        
+        # 显示运行任务数
+        text.append("[Tasks ", "bold")
+        if status.task_count > 10:
+            text.append(f"{status.task_count}", "bold red")
+        elif status.task_count > 5:
+            text.append(f"{status.task_count}", "bold yellow")
         else:
-            text.append(f"{len(status.running_tasks)}", "bold green")
-        text.append("]|")
-        current_time = time.time()
-        pressure = int((1 - math.exp(-sum([current_time - task["start_time"] for task in status.running_tasks]) / 60)) * 100)
-        if pressure > 50:
-            color = "on black bold red"
-        elif pressure > 30:
-            color = "on black bold yellow"
-        else:
-            color = "on black bold green"
-        text.append("█" * int((width - len(text)) * pressure / 100), color)
+            text.append(f"{status.task_count}", "bold green")
+        text.append("]", "bold")
+        
         return text
     
     def close_server():
@@ -122,6 +172,7 @@ def init(status: Status, loop):
         while not tui.close_signal:
             status.cpu_percent = psutil.cpu_percent(interval=1)
             status.memory_percent = psutil.virtual_memory().percent
+            status.update_task_count()  # 更新协程数量
             time.sleep(1)
 
     update_machine_status_thread = threading.Thread(target=update_machine_status, daemon=True)
@@ -136,7 +187,8 @@ def init(status: Status, loop):
 
 global_status = Status()
 async def server():
-    tui = init(global_status, asyncio.get_event_loop())
+    global_status.loop = asyncio.get_event_loop()
+    init(global_status)
     log_func("[🟧|System]Booting up...")
     echo_pool = onebot_api_module.EchoPool()
     Bots = [bot_module.Bot(echo_pool)]
@@ -162,7 +214,7 @@ async def server():
                     bot.bot_qq = bot_qq
                     await bot.create(ws)
 
-                await process_message(ws, Bots, echo_pool)
+                await process_message(ws, Bots, echo_pool, global_status)
             else:
                 log_func("[🟥|Websocket]Failed to connect to bot backend: ", response)
                 await asyncio.sleep(5)
