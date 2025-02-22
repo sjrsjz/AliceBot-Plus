@@ -1,25 +1,31 @@
-websockets
 requests
+websockets
 pyppeteer
 
-markdown
-beautifulsoup4
-typst
 regex
+markdown
+typst
+beautifulsoup4
 
 numpy
 matplotlib
 
 RestrictedPython
 
+google-generativeai
 tiktoken
 
-textwrap
-base64
+# textwrap
+# base64
 
+wcwidth
+readchar
 simple-fjson
 
 asyncio
 aiohttp
 
 rich
+
+psutil
+

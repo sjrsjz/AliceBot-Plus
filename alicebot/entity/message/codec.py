@@ -4,15 +4,19 @@ import pathlib
 import sys
 
 from typing import Callable, Any
-log_func: Callable[[Any], None]
 
+log_func: Callable[[Any], None]
 
 project_root = str(pathlib.Path(__file__).parent.parent.parent)
 if project_root not in sys.path:
     sys.path.append(project_root)
 from loader import moduleloader
-aibackend_package = moduleloader.ModuleLoader(str(pathlib.Path(__file__).parent.parent.parent / "aibackend"), log_func=log_func)
-gemini = aibackend_package.load_module("gemini", hot_reload = True, log_func=log_func)
+
+aibackend_package = moduleloader.ModuleLoader(str(pathlib.Path(__file__).parent.parent.parent / "aibackend"),
+                                              log_func=log_func)
+gemini = aibackend_package.load_module("gemini", hot_reload=True, log_func=log_func)
+
+
 async def encode_message_to_CQ(message):
     encoded_message = ""
     for x in message:
@@ -25,6 +29,8 @@ async def encode_message_to_CQ(message):
                     encoded_message += f"{key}={value},"
             encoded_message = encoded_message[:-1] + "]"
     return encoded_message
+
+
 async def encode_message_to_CQ_without_At_self(message, bot_qq):
     encoded_message = ""
     for x in message:
@@ -39,6 +45,7 @@ async def encode_message_to_CQ_without_At_self(message, bot_qq):
                     encoded_message += f"{key}={value},"
             encoded_message = encoded_message[:-1] + "]"
     return encoded_message
+
 
 async def encode_message_to_CQ_without_At_self_and_Image(message, bot_qq):
     encoded_message = ""
@@ -70,6 +77,7 @@ async def encode_message_to_CQ_without_At_self_and_Image(message, bot_qq):
             encoded_message = encoded_message[:-1] + "]"
     return encoded_message
 
+
 async def encode_message_to_CQ_without_At_self_and_Image_tag(message, bot_qq):
     encoded_message = ""
     for x in message:
@@ -91,6 +99,8 @@ async def encode_message_to_CQ_without_At_self_and_Image_tag(message, bot_qq):
                     encoded_message += f"{key}={value},"
             encoded_message = encoded_message[:-1] + "]"
     return encoded_message
+
+
 async def decode_CQ_to_message(message):
     decoded_message = []
     i = 0

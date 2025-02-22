@@ -10,6 +10,7 @@ from multiprocessing import Process, Queue, get_context
 import RestrictedPython
 from RestrictedPython import compile_restricted
 import matplotlib
+
 matplotlib.use('Agg')  # 必须在所有matplotlib导入之前设置
 import matplotlib.pyplot as plt
 import numpy as np
@@ -18,8 +19,8 @@ import random
 import datetime as dt
 import re
 
-
 from typing import Callable, Any
+
 log_func: Callable[[Any], None]
 
 # ----------------------
@@ -52,6 +53,7 @@ SAFE_GLOBALS = {
     'datetime': dt
 }
 
+
 # ----------------------
 # 工具函数
 # ----------------------
@@ -64,6 +66,7 @@ def remove_imports(code: str) -> str:
         flags=re.MULTILINE
     )
 
+
 # ----------------------
 # 子进程执行逻辑（跨平台兼容）
 # ----------------------
@@ -73,16 +76,16 @@ def _run_code_in_process(source_code: str, result_queue: Queue):
     try:
         # 使用新的独立figure避免线程冲突
         fig = plt.figure()
-        
+
         # 编译并执行代码
         byte_code = compile_restricted(source_code, '<inline>', 'exec')
         exec(byte_code, SAFE_GLOBALS)
-        
+
         # 保存到临时文件
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
         fig.savefig(temp_file.name, format='png', bbox_inches='tight', dpi=100)
         result_queue.put(("success", temp_file.name))
-        
+
     except Exception as e:
         tb = traceback.format_exc()
         result_queue.put(("error", f"{str(e)}\n{tb}"))
@@ -93,6 +96,7 @@ def _run_code_in_process(source_code: str, result_queue: Queue):
         if temp_file:
             temp_file.close()
 
+
 # ----------------------
 # 主执行逻辑（跨平台兼容）
 # ----------------------
@@ -102,19 +106,19 @@ def execute_with_timeout(source_code: str, timeout: int = 8) -> tuple:
     ctx = get_context('spawn' if IS_WINDOWS else 'fork')
     result_queue = ctx.Queue()
     process = ctx.Process(target=_run_code_in_process, args=(source_code, result_queue))
-    
+
     try:
         process.start()
         process.join(timeout)
-        
+
         if process.is_alive():
             process.terminate()
             process.join()
             return False, "执行超时", None
-            
+
         if result_queue.empty():
             return False, "无返回结果", None
-            
+
         status, payload = result_queue.get()
         if status == "success":
             # 读取临时文件内容并立即删除
@@ -123,11 +127,12 @@ def execute_with_timeout(source_code: str, timeout: int = 8) -> tuple:
             os.unlink(payload)  # 立即删除临时文件
             return True, "执行成功", img_data
         return False, payload, None
-        
+
     finally:
         # 确保进程终止
         if process.is_alive():
             process.kill()
+
 
 # ----------------------
 # 对外接口
@@ -138,15 +143,15 @@ def safe_exec(code: str, timeout: int = 30) -> tuple:
         # 预处理代码
         code = remove_imports(code)
         code = f"{code}\nplt.close('all')\n"  # 确保关闭所有图形
-        
+
         # 执行代码
         success, message, img_data = execute_with_timeout(code, timeout)
-        
+
         if not success:
             return message, False
 
         return img_data, True
-        
+
     except Exception as e:
         log_func(f"[Python Executor]Error: {str(e)}")
         return f"系统错误: {str(e)}", False

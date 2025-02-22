@@ -1,5 +1,7 @@
 import functools
 import asyncio
+
+
 def timeout(seconds=5, timeout_callback=None):
     def decorator(func):
         @functools.wraps(func)
@@ -11,5 +13,7 @@ def timeout(seconds=5, timeout_callback=None):
                     return await timeout_callback(*args, **kwargs)
                 else:
                     return None
+
         return wrapper
+
     return decorator
