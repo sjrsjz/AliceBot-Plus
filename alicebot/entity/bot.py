@@ -60,15 +60,15 @@ class Bot:
             return
         if not sender["user_id"] in self.admins:
             await message_sender_func("Permission denied.")
-            log_func("[🟥|Bot]Permission denied for sudo command:", command, "because", sender["user_id"], "is not in the admin list.")
+            log_func('ERROR', 'Bot', "Permission denied for sudo command:", command, "because", sender["user_id"], "is not in the admin list.")
             return
         command = command.replace(self.sudo_command_trigger, "", 1).strip()
-        log_func("[🟨|Bot]Received sudo command:", command)
+        log_func('INFO', 'Bot', "Received sudo command:", command)
 
         try:
             command_json = fjson.decode(command) # 解析json
         except Exception as e:
-            log_func("[🟥|Bot]Failed to parse command:", e)
+            log_func('ERROR', 'Bot', "Failed to parse command:", e)
             await message_sender_func("Failed to parse command.")
             raise Exception("#sudo command is invalid: " + command)
         try:
@@ -77,12 +77,12 @@ class Bot:
                 log_text = ""
                 if "enable" in command_json:
                     for plugin_name in command_json["enable"]:
-                        log_func("[🟨|Bot]Enable plugin:", plugin_name)
+                        log_func('INFO', 'Bot', "Enable plugin:", plugin_name)
                         self.plugin_meta.activate_plugin(plugin_name)
                         log_text += f"Enabled plugin: {plugin_name}\n"
                 if "disable" in command_json:
                     for plugin_name in command_json["disable"]:
-                        log_func("[🟨|Bot]Disable plugin:", plugin_name)
+                        log_func('INFO', 'Bot', "Disable plugin:", plugin_name)
                         self.plugin_meta.deactivate_plugin(plugin_name)
                         log_text += f"Disabled plugin: {plugin_name}\n"
                 await message_sender_func(log_text.strip())
@@ -91,7 +91,7 @@ class Bot:
             await message_sender_func("Unknown command.")
             raise Exception("#sudo command is invalid: " + command)
         except Exception as e:
-            log_func("[🟥|Bot]Error in sudo command:", e)
+            log_func('ERROR', 'Bot', "Error in sudo command:", e)
             await message_sender_func("Error in sudo command.")
             raise e
     async def receive_group_message(self, ws: websockets.WebSocketClientProtocol, message):
@@ -109,7 +109,7 @@ class Bot:
             except Bot.SkipFollow:
                 return # 跳过后续插件以及默认回复
             except Exception as e:
-                log_func("[🟥|Bot]Error in plugin", plugin_name, ":", e)
+                log_func('ERROR', 'Bot', "Error in plugin", plugin_name, ":", e)
 
         api = onebot_package['api'].OneBotAPI(self.echo_pool)
 
@@ -117,7 +117,7 @@ class Bot:
         await self.sudo_command(ws, message_str, lambda x: api.send_group_message(ws, message["group_id"], x), message["sender"])
 
     async def create(self, ws: websockets.WebSocketClientProtocol):
-        log_func("[🟨|Bot]Creating bot entity...")
+        log_func('INFO', 'Bot', "Creating bot entity...")
         self.plugin_package = moduleloader.ModuleLoader(str(self.plugin_dir), log_func=log_func) # Import the plugin package
 
         if not self.plugin_dir.exists():
@@ -165,13 +165,13 @@ class Bot:
             try:
                 self.plugin_meta.load()
             except Exception as e:
-                log_func("[🟥|Bot]Failed to load plugin meta:", e)
-                log_func("[🟨|Bot]Creating a new plugin meta file...")
+                log_func('ERROR', 'Plugin', "Failed to load plugin meta:", e)
+                log_func('INFO', 'Plugin', "Creating a new plugin meta file...")
                 self.plugin_meta = PluginMeta()
                 self.plugin_meta.save()
 
 
-        log_func("[🟨|Bot]Plugin meta:", self.plugin_meta.json())
+        log_func('DEBUG', 'Plugin', "Plugin meta:", self.plugin_meta.json())
 
         for plugin_name in plugin_names:
             # 移除文件后缀
@@ -193,16 +193,19 @@ class Bot:
                     self.timeout = timeout
                     self.echo_pool = echo_pool
                     self.onebot_package_path = onebot_package_path
-                    self.message_codec_package_path = message_codec_package_path
-            self.plugin_package.load_module(plugin_name, hot_reload=True, log_func=log_func, plugin_context=PluginContext(self, self.plugin_meta, self.Skip, self.SkipFollow, timeout, self.echo_pool, onebot_package_path, message_codec_package_path))
+                    self.message_codec_package_path = message_codec_package_path                    
+            self.plugin_package.load_module(plugin_name, hot_reload=True, log_func=log_func,
+                                            before_reload_callback=lambda plugin_name: self.plugin_package.get_module(plugin_name).Plugin.before_reload(),
+                                            after_reload_callback=lambda plugin_name: self.plugin_package.get_module(plugin_name).Plugin.after_reload(),                                            
+                                            plugin_context=PluginContext(self, self.plugin_meta, self.Skip, self.SkipFollow, timeout, self.echo_pool, onebot_package_path, message_codec_package_path))
 
         for plugin_name, plugin in self.plugin_package.get_all_modules().items():
             try:
-                log_func("[🟨|Bot]Initializing plugin:", plugin_name)
-                await plugin.Plugin.create()
-                log_func("[🟩|Bot]Plugin", plugin_name, "initialized.")
+                log_func('INFO', 'Plugin', "Initializing plugin:", plugin_name)
+                plugin.Plugin.create()
+                log_func('INFO', 'Plugin', "Plugin", plugin_name, "initialized.")
             except Exception as e:
-                log_func("[🟥|Bot]Initialize plugin", plugin_name, "failed:", e)
+                log_func('ERROR', 'Plugin', "Initialize plugin", plugin_name, "failed:", e)
 
         @fjson.DataClass
         class BotConfig:
@@ -225,7 +228,7 @@ class Bot:
                             config.admins = data.get("admins", [])
                         return config
                 except Exception as e:
-                    log_func(f"[BotConfig] Failed to load config: {e}")
+                    log_func('ERROR', 'Config', f"Failed to load config: {e}")
                     return cls()
                 
         self.bot_config_path = pathlib.Path(__file__).parent.parent / "config"
@@ -238,18 +241,18 @@ class Bot:
         self.bot_config = BotConfig.load(self.bot_config_path)
         self.admins = self.bot_config.admins
 
-        log_func("[🟩|Bot]Bot entity created.")
+        log_func('INFO', 'Bot', "Bot entity created.")
 
     async def destroy(self, ws: websockets.WebSocketClientProtocol):
-        log_func("[🟨|Bot]Destroying bot entity...")
+        log_func('INFO', 'Bot', "Destroying bot entity...")
         for plugin_name, plugin in self.plugin_package.get_all_modules().items():
             try:
-                log_func("[🟨|Bot]Destroying plugin:", plugin_name)
-                await plugin.Plugin.destroy()
-                log_func("[🟩|Bot]Plugin", plugin_name, "destroyed")
+                log_func('INFO', 'Plugin', "Destroying plugin:", plugin_name)
+                plugin.Plugin.destroy()
+                log_func('INFO', 'Plugin', "Plugin", plugin_name, "destroyed")
             except Exception as e:
-                log_func("[🟥|Bot]Destroy plugin", plugin_name, "failed:", e)
+                log_func('ERROR', 'Plugin', "Destroy plugin", plugin_name, "failed:", e)
         self.plugin_package = None
         self.plugin_meta.save()
         self.plugin_meta = None
-        log_func("[🟩|Bot]Bot entity destroyed.")
+        log_func('INFO', 'Bot', "Bot entity destroyed.")

@@ -238,7 +238,7 @@ async def process_chatbot_typeset(message: str, FUNCTION_HANDLERS: dict, **kwarg
             
         # 添加函数调用
         func_body = match.group(1)
-        log_func(f"[Lagrange Core]Processing tool code: {func_body}")
+        log_func('INFO', 'AI', f"Processing tool code: {func_body}")
         try:
             func_body = fjson.decode(func_body)
         except:
@@ -287,11 +287,11 @@ async def process_chatbot_typeset(message: str, FUNCTION_HANDLERS: dict, **kwarg
         else:
             handler = FUNCTION_HANDLERS.get(part["name"])
             if handler is not None:
-                log_func(f"[Lagrange Core]Processing function call: {part['name']}, args: {part['args']}")
+                log_func('INFO', 'AI', f"Processing function call: {part['name']}, args: {part['args']}")
                 try:
                     result = await handler(part["args"], **kwargs)
                 except Exception as e:                    
-                    log_func(f"[Lagrange Core]Function call failed: {str(e)}")
+                    log_func('INFO', 'ERROR', f"Function call failed: {str(e)}")
                     result = f" [{part['name']}] {part['args']} "
                 final_msg += result
             else:

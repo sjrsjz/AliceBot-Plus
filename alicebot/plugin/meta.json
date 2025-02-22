@@ -3,6 +3,10 @@
         "test": {
             "active": 1,
             "permission": 0
+        },
+        "help": {
+            "active": 1,
+            "permission": 0
         }
     }
 }

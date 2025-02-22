@@ -168,7 +168,8 @@ class RichTUI:
                     pass
             buffer = buffer[:4096]  # 限制输出长度
             self.print_buffer += buffer + "\n"
-
+    def log(self, level, entity, *args, **kwargs):
+        self.print(f"[{level}][{entity}]", *args, **kwargs)
     def clear(self):
         self.print_buffer = ""
 

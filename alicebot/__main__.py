@@ -18,15 +18,21 @@ from loader import moduleloader
 
 from interface import TUI
 
-_log_func = print
+def default_log_func(level, entity, *args, **kwargs):
+    print(f"[{level}][{entity}]", *args, **kwargs)
+
+_log_func = default_log_func
 
 
-def log_func(text, *args, **kwargs):
+def log_func(level = 'INFO', entity = 'System', *args, **kwargs):
     global _log_func
     if _log_func:
-        _log_func(text, *args, **kwargs)
+        _log_func(level, entity, *args, **kwargs)
     else:
-        print(text, *args, **kwargs)
+        if default_log_func is not None:
+            default_log_func(f"[{level}][{entity}]", *args, **kwargs)
+        else:
+            print(f"[{level}][{entity}]", *args, **kwargs)
 
 
 onebot_package = moduleloader.ModuleLoader(str(pathlib.Path(__file__).parent / "onebot"), log_func=log_func)
@@ -73,7 +79,7 @@ async def process_message(ws, Bots, echo_pool, status: Status):
                 continue
 
             if message["post_type"] == "meta_event" and message["meta_event_type"] == "heartbeat":
-                log_func("[🟧|Websocket]Received heartbeat")
+                log_func('INFO', 'Websocket', "Received heartbeat")
                 continue
             if message["post_type"] == "message" and message["message_type"] == "group":
                 for bot in Bots:
@@ -95,16 +101,16 @@ async def process_message(ws, Bots, echo_pool, status: Status):
                             # 如果没有异常，记录成功信息
                             for idx in range(len(status.bot_tasks)):
                                 if status.bot_tasks[idx]["task"] == task:
-                                    log_func("[🟩|Task]Task completed:",
+                                    log_func('INFO', 'Task', "Task completed:",
                                              status.bot_tasks[idx]['task'].get_name(),
                                              "Time:", time.time() - status.bot_tasks[idx]['start_time'])
                                     status.bot_tasks.pop(idx)
                                     break
 
                         except asyncio.CancelledError:
-                            log_func("[🟨|Task]Task was cancelled")
+                            log_func('WARN', 'Task', "Task was cancelled")
                         except Exception as e:
-                            log_func("[🟥|Task]Task failed with error:", e, '\n' + traceback.format_exc())
+                            log_func('ERROR', 'Task', "Task failed with error:", e, '\n' + traceback.format_exc())
                         finally:
                             # 确保任务从列表中移除
                             for idx in range(len(status.bot_tasks)):
@@ -114,12 +120,12 @@ async def process_message(ws, Bots, echo_pool, status: Status):
 
                     task.add_done_callback(task_done_callback)
             else:
-                log_func("[🟥|Websocket]Unsupported message type: ", message)
+                log_func('WARN', 'Websocket', "Unsupported message type: ", message)
         except websockets.exceptions.ConnectionClosedError:
-            log_func("[🟥|Websocket]Connection closed in message processor")
+            log_func('ERROR', 'Websocket', "Connection closed in message processor")
             break
         except Exception as e:
-            log_func("[🟥|Websocket]Error in message processor: ", e)
+            log_func('ERROR', 'Websocket', "Error in message processor: ", e)
             await asyncio.sleep(1)
 
 
@@ -174,8 +180,8 @@ def init(status: Status):
     def close_server():
         close_event.set()
         global _log_func
-        _log_func = print
-        log_func("[🟧|System]Received close signal")
+        _log_func = default_log_func
+        log_func('WARN', 'System', "Received close signal")
         if global_websocket:
             global_websocket.transport.close()
 
@@ -193,7 +199,7 @@ def init(status: Status):
     tui.run_TUI_thread()
 
     global _log_func
-    _log_func = tui.print
+    _log_func = tui.log
     return tui
 
 
@@ -203,7 +209,7 @@ global_status = Status()
 async def server():
     global_status.loop = asyncio.get_event_loop()
     init(global_status)
-    log_func("[🟧|System]Booting up...")
+    log_func('INFO', 'System', "Booting up...")
     echo_pool = onebot_api_module.EchoPool()
     Bots = [bot_module.Bot(echo_pool)]
     ws: Optional[websockets.WebSocketClientProtocol] = None
@@ -217,12 +223,12 @@ async def server():
             response = await ws.recv()
             response = json.loads(response)
 
-            log_func("[🟨|Websocket]Received response")
+            log_func('INFO', 'Websocket', "Received response")
             if "self_id" in response:
                 bot_qq = response["self_id"]
-                log_func("[🟩|Websocket]Connected to bot backend successfully")
+                log_func('INFO', 'Websocket', "Connected to bot backend successfully")
                 group_list = json.loads(await onebot_api_module.OneBotAPI(echo_pool).get_bot_group_list(ws, False))
-                log_func("[🟩|Websocket]Bot group list: length", len(group_list['data']))
+                log_func('INFO', 'Websocket', "Bot group list: length", len(group_list['data']))
 
                 for bot in Bots:
                     bot.bot_qq = bot_qq
@@ -230,23 +236,23 @@ async def server():
 
                 await process_message(ws, Bots, echo_pool, global_status)
             else:
-                log_func("[🟥|Websocket]Failed to connect to bot backend: ", response)
+                log_func('ERROR', 'Websocket', "Failed to connect to bot backend: ", response)
                 await asyncio.sleep(5)
                 continue
         except websockets.exceptions.ConnectionClosedError:
-            log_func("[🟥|Websocket]Connection closed, reconnect after 5 seconds")
+            log_func('ERROR', 'Websocket', "Connection closed, reconnect after 5 seconds")
             if ws:
                 await ws.close()
             await asyncio.sleep(5)
-            log_func("[🟨|Websocket]Reconnecting...")
+            log_func('INFO', 'Websocket', "Reconnecting...")
         except Exception as e:
-            log_func(f"[🟥|Websocket]Error: {str(e)}, reconnect after 5 seconds")
+            log_func('ERROR', 'Websocket', f"Error: {str(e)}, reconnect after 5 seconds")
             if ws:
                 await ws.close()
             await asyncio.sleep(5)
-            log_func("[🟨|Websocket]Reconnecting...")
+            log_func('INFO', 'Websocket', "Reconnecting...")
 
-    log_func("[🟧|System]Server is shutting down...")
+    log_func('INFO', 'System', "Server is shutting down...")
     echo_pool.close_event.set()
     for bot in Bots:
         await bot.destroy(ws)
@@ -254,17 +260,17 @@ async def server():
 
 
 async def cleanup():
-    log_func("[🟧|System]Cleaning up...")
+    log_func('INFO', 'System', "Cleaning up...")
     tasks = [task for task in asyncio.all_tasks()
              if task is not asyncio.current_task()]
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
-    log_func("[🟧|System]Cleanup completed")
+    log_func('INFO', 'System', "Cleanup completed")
 
 
 def signal_handler():
-    log_func("\n[🟧|System]Received shutdown signal")
+    log_func('WARN', 'System', "Received shutdown signal")
     close_event.set()
 
 
@@ -273,7 +279,7 @@ async def main():
 
         await server()
     except Exception as e:
-        log_func(f'[🟥|System]Error in main: {e}')
+        log_func('ERROR', 'System', f'Error in main: {e}')
     finally:
         await cleanup()
 
@@ -289,7 +295,7 @@ if __name__ == '__main__':
 
         loop.run_until_complete(main())
     except KeyboardInterrupt:
-        log_func("\n[🟥|System]KeyboardInterrupt received")
+        log_func('ERROR', 'System', "KeyboardInterrupt received")
     finally:
         pending = asyncio.all_tasks(loop=loop)
         for task in pending:
@@ -299,4 +305,4 @@ if __name__ == '__main__':
         loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
         loop.run_until_complete(loop.shutdown_asyncgens())
         loop.close()
-        log_func("[🟥|System]Event loop closed")
+        log_func('INFO', 'System', "Event loop closed")

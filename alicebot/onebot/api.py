@@ -19,7 +19,7 @@ class OneBotAPI:
 
     async def get_stranger_info(self, ws, user_id):
         if self.echo_pool.echo_dict is None: raise Exception("Echo dict not set")
-        log_func("[🟨|OneBot]Getting stranger info:", user_id)
+        log_func('INFO', 'OneBot', "Getting stranger info:", user_id)
         self.echo_pool.echo_counter += 1
         self_echo = str(self.echo_pool.echo_counter)
         json_data = {
@@ -35,14 +35,14 @@ class OneBotAPI:
         response = self.echo_pool.echo_dict[self_echo]
         del self.echo_pool.echo_dict[self_echo]
         if "data" in response and response["data"] is not None:
-            log_func("[🟩|OneBot]Successfully got stranger info")
+            log_func('INFO', 'OneBot', "Successfully got stranger info")
             return response["data"]
-        log_func("[🟥|OneBot]Failed to get stranger info")
+        log_func('ERROR', 'OneBot', "Failed to get stranger info")
         return None
 
     async def get_bot_group_list(self, ws, async_mode=True):
         if self.echo_pool.echo_dict is None: raise Exception("Echo dict not set")
-        log_func("[🟨|OneBot]Getting bot group list")
+        log_func('INFO', 'OneBot', "Getting bot group list")
         self.echo_pool.echo_counter += 1
         self_echo = str(self.echo_pool.echo_counter)
         json_data = {
@@ -58,14 +58,14 @@ class OneBotAPI:
         response = self.echo_pool.echo_dict[self_echo]
         del self.echo_pool.echo_dict[self_echo]
         if "data" in response and response["data"] is not None:
-            log_func("[🟩|OneBot]Successfully got bot group list")
+            log_func('INFO', 'OneBot', "Successfully got bot group list")
             return response["data"]
-        log_func("[🟥|OneBot]Failed to get bot group list")
+        log_func('ERROR', 'OneBot', "Failed to get bot group list")
         return None
 
     async def get_member_list(self, ws, group_id):
         if self.echo_pool.echo_dict is None: raise Exception("Echo dict not set")
-        log_func("[🟨|OneBot]Getting member list of group:", group_id)
+        log_func('INFO', 'OneBot', "Getting member list of group:", group_id)
         self.echo_pool.echo_counter += 1
         self_echo = str(self.echo_pool.echo_counter)
         json_data = {
@@ -82,14 +82,14 @@ class OneBotAPI:
         response = self.echo_pool.echo_dict[self_echo]
         del self.echo_pool.echo_dict[self_echo]
         if "data" in response and response["data"] is not None:
-            log_func("[🟩|OneBot]Successfully got member list")
+            log_func('INFO', 'OneBot', "Successfully got member list")
             return response["data"]
-        log_func("[🟥|OneBot]Failed to get member list")
+        log_func('ERROR', 'OneBot', "Failed to get member list")
         return None
 
     async def send_group_message(self, ws, group_id, message, auto_escape=False):
         if self.echo_pool.echo_dict is None: raise Exception("Echo dict not set")
-        log_func("[🟨|OneBot]Sending group message to group:", group_id)
+        log_func('INFO', 'OneBot', "Sending group message to group:", group_id)
         self.echo_pool.echo_counter += 1
         self_echo = str(self.echo_pool.echo_counter)
         json_data = {
@@ -108,15 +108,15 @@ class OneBotAPI:
         del self.echo_pool.echo_dict[self_echo]
         if "status" in response:
             if response["status"] == "ok":
-                log_func("[🟩|OneBot]Message sent successfully")
+                log_func('INFO', 'OneBot', "Message sent successfully")
             else:
-                log_func("[🟥|OneBot]Failed to send group message")
+                log_func('ERROR', 'OneBot', "Failed to send group message")
         if response is None:
             return None
         if "data" in response and response["data"] is not None and "message_id" in response["data"]:
-            log_func("[🟩|OneBot]Successfully sent group message")
+            log_func('INFO', 'OneBot', "Successfully sent group message")
             return response["data"]["message_id"]
-        log_func("[🟥|OneBot]Failed to send group message")
+        log_func('ERROR', 'OneBot', "Failed to send group message")
         return None
 
     async def send_group_message_separate_audio(self, ws, group_id, message, auto_escape=False):
@@ -135,7 +135,7 @@ class OneBotAPI:
 
     async def send_private_message(self, ws, user_id, message, auto_escape=False):
         if self.echo_pool.echo_dict is None: raise Exception("Echo dict not set")
-        log_func("[🟨|OneBot]Sending private message to user:", user_id)
+        log_func('INFO', 'OneBot', "Sending private message to user:", user_id)
         self.echo_pool.echo_counter += 1
         self_echo = str(self.echo_pool.echo_counter)
         json_data = {
@@ -152,23 +152,22 @@ class OneBotAPI:
             await asyncio.sleep(0.1)
         response = self.echo_pool.echo_dict[self_echo]
         del self.echo_pool.echo_dict[self_echo]
-        log_func("[Lagrange Core]Response:", response)
         if "status" in response:
             if response["status"] == "ok":
-                log_func("[OneBot]Message sent successfully")
+                log_func('INFO', 'OneBot', "Message sent successfully")
             else:
-                log_func("[OneBot]Failed to send message")
+                log_func('INFO', 'OneBot', "Failed to send message")
         if response is None:
             return None
         if "data" in response and response["data"] is not None and "message_id" in response["data"]:
-            log_func("[🟩|OneBot]Successfully sent private message")
+            log_func('INFO', 'OneBot', "Successfully sent private message")
             return response["data"]["message_id"]
-        log_func("[🟥|OneBot]Failed to send private message")
+        log_func('ERROR', 'OneBot', "Failed to send private message")
         return None
 
     async def get_group_info(self, ws, group_id):
         if self.echo_pool.echo_dict is None: raise Exception("Echo dict not set")
-        log_func("[🟨|OneBot]Getting group info of group:", group_id)
+        log_func('INFO', 'OneBot', "Getting group info of group:", group_id)
         self.echo_pool.echo_counter += 1
         self_echo = str(self.echo_pool.echo_counter)
         json_data = {
@@ -185,16 +184,16 @@ class OneBotAPI:
         response = self.echo_pool.echo_dict[self_echo]
         del self.echo_pool.echo_dict[self_echo]
         if "data" in response and response["data"] is not None:
-            log_func("[🟩|OneBot]Successfully got group info")
+            log_func('INFO', 'OneBot', "Successfully got group info")
             return response["data"]
-        log_func("[🟥|OneBot]Failed to get group info")
+        log_func('ERROR', 'OneBot', "Failed to get group info")
         return None
 
     async def withdraw_group_message(self, ws, message_id):
         if self.echo_pool.echo_dict is None: raise Exception("Echo dict not set")
         if message_id is None:
             return None
-        log_func("[🟨|OneBot]Withdrawing message:", message_id)
+        log_func('INFO', 'OneBot', "Withdrawing message:", message_id)
         self.echo_pool.echo_counter += 1
         self_echo = str(self.echo_pool.echo_counter)
         json_data = {
@@ -211,15 +210,14 @@ class OneBotAPI:
         del self.echo_pool.echo_dict[self_echo]
         if "status" in response:
             if response["status"] == "ok":
-                log_func("[🟩|OneBot]Withdraw successfully")
-            else:
-                log_func("[🟥|OneBot]Failed to withdraw message")
-        log_func("[🟥|OneBot]Failed to withdraw message")
+                log_func('INFO', 'OneBot', "Withdraw successfully")
+                return True
+        log_func('ERROR', 'OneBot', "Failed to withdraw message")
         return None
 
     async def set_group_ban(self, ws, group_id, user_id, duration):
         if self.echo_pool.echo_dict is None: raise Exception("Echo dict not set")
-        log_func("[🟨|OneBot]Banning user:", user_id)
+        log_func('INFO', 'OneBot', "Banning user:", user_id)
         self.echo_pool.echo_counter += 1
         self_echo = str(self.echo_pool.echo_counter)
         json_data = {
@@ -238,8 +236,7 @@ class OneBotAPI:
         del self.echo_pool.echo_dict[self_echo]
         if "status" in response:
             if response["status"] == "ok":
-                log_func("[🟩|OneBot]Successfully banned user")
-            else:
-                log_func("[🟥|OneBot]Failed to ban user")
-        log_func("[🟥|OneBot]Failed to ban user")
+                log_func('INFO', 'OneBot', "Successfully banned user")
+                return True
+        log_func('ERROR', 'OneBot', "Failed to ban user")
         return None
