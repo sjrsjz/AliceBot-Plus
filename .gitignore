@@ -8,3 +8,4 @@ output.png
 .VSCodeCounter
 python_env
 **/context_temp
+**/bot_config.json

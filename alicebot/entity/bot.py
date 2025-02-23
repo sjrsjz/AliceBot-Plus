@@ -17,6 +17,7 @@ from loader import moduleloader
 onebot_package_path = pathlib.Path(__file__).parent.parent / "onebot"
 aibackend_package_path = pathlib.Path(__file__).parent.parent / "aibackend"
 message_codec_package_path = pathlib.Path(__file__).parent / "message"
+prompt_package_path = pathlib.Path(__file__).parent.parent / "prompts"
 
 onebot_package = moduleloader.ModuleLoader(str(onebot_package_path), log_func=log_func)
 onebot_api_module = onebot_package.load_module(
@@ -246,6 +247,7 @@ class Bot:
                     onebot_package_path=onebot_package_path,
                     message_codec_package_path=message_codec_package_path,
                     aibackend_package_path=aibackend_package_path,
+                    prompt_package_path=prompt_package_path,
                 ):
                     self.bot_entity = bot_entity
                     self.plugin_meta = plugin_meta
@@ -256,6 +258,7 @@ class Bot:
                     self.onebot_package_path = onebot_package_path
                     self.message_codec_package_path = message_codec_package_path
                     self.aibackend_package_path = aibackend_package_path
+                    self.prompt_package_path = prompt_package_path
 
             self.plugin_package.load_module(
                 plugin_name,
@@ -277,6 +280,7 @@ class Bot:
                     onebot_package_path,
                     message_codec_package_path,
                     aibackend_package_path,
+                    prompt_package_path,
                 ),
             )
 

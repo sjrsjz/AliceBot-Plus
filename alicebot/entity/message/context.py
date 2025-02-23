@@ -1,9 +1,10 @@
+import copy
 class ContextManager:
     def __init__(self, context = []):
         self.context = context
 
     def push_message(self, message):
-        self.context.append(message)
+        self.context.append(copy.deepcopy(message))
 
     def pop_message(self):
         self.context.pop()
@@ -12,7 +13,7 @@ class ContextManager:
         return self.context
 
     def set_message(self, message):
-        self.context = message
+        self.context = copy.deepcopy(message)
 
     def clear(self):
         self.context = []
@@ -35,7 +36,7 @@ class StreamContextManager:
         self.max_length = max_length
 
     def push_message(self, message):
-        self.context.append(message)
+        self.context.append(copy.deepcopy(message))
         if len(self.context) > self.max_length:
             self.context.pop(0)
 

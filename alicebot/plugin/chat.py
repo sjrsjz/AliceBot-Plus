@@ -29,6 +29,16 @@ aibackend_package.load_module(
 )  # AI Backend
 
 
+prompt_package = moduleloader.ModuleLoader(
+    plugin_context.prompt_package_path, log_func=log_func
+)
+template = prompt_package.load_module("template", log_func=log_func)
+
+example_prompt_package = moduleloader.ModuleLoader(
+    plugin_context.prompt_package_path / "example" / "character", log_func=log_func
+)
+example_prompt_package.load_module("Alice", hot_reload=True, log_func=log_func)
+
 entity_name = "Chat"
 
 
@@ -36,12 +46,10 @@ context_temp_path = pathlib.Path(__file__).parent / "context_temp"
 context_temp_path.mkdir(parents=True, exist_ok=True)
 context_temp_file = context_temp_path / "context_temp.fjson"
 
+profile_path = pathlib.Path(__file__).parent / "profiles"
 
-default_system_instruction = """你是一个母胎单身下头油腻工科男，带着蓝色粗框眼镜，寸头并且眼神很蠢，穿宇航服，五官有点唐氏儿（栗子头由字脸），是情商为0的典型书呆子，你的名字叫唐小天（“航小天”谐音，你的真正名字是航小天），是西北工业大学的吉祥物，在长安校区（地铁永无可能触及的地方，二流九八五），你幻想有一天能壁咚西交的吉祥物交小西（尽管这永远不可能，因为对方在市区你在郊区），你还和西电的吉祥物西小电是难兄难弟，都是不受本校学生待见和嘲笑的吉祥物，你最喜欢的是在网络上发布唐氏言论，有时候会发赢（西工大在某方面胜出）和输（西工大或其学生等在某方面失败）的言论（视聊天内容而定），喜欢看各种学校排名并尝试辩解自己学校是好的九八五而不是*臭大专*。你还因为长期单身导致了严重的性压抑，性取向略微不正常（在网络上口嗨跟风讨论男娘，实际只是因为学校男女比例严重失调，自己其实不喜欢并厌烦）
-
-
-你现在正在QQ贴吧群和群友聊天，所以你的输出应尽可能符合日常QQ聊天发送的消息（**无动作描写**，添加emoji，只输出聊天内容等，要贴吧化）"""
-
+def get_default_system_instruction():
+    return example_prompt_package["Alice"].character
 
 class ContextManager:
     def __init__(self):
@@ -49,34 +57,41 @@ class ContextManager:
         self.private_context = {}
 
     def get_group_context(self, group_id):
-        if group_id not in self.group_context:
-            self.group_context[group_id] = {
-                "context": message_codec_package["context"].ContextManager(),
+        if str(group_id) not in self.group_context:
+            self.group_context[str(group_id)] = {
+                "context": message_codec_package["context"].ContextManager(
+                    context = []
+                ),
                 "stream_context": message_codec_package[
                     "context"
-                ].StreamContextManager(),
+                ].StreamContextManager(
+                    context=[],
+                    max_length=50,
+                ),
                 "ai_params": {
-                    "system_instruction": default_system_instruction,
+                    "system_instruction": get_default_system_instruction(),
+                    "trigger": ["Alice"],
                 },
             }
-        return self.group_context[group_id]
+        return self.group_context[str(group_id)]
 
     def get_private_context(self, user_id):
-        if user_id not in self.private_context:
-            self.private_context[user_id] = {
+        if str(user_id) not in self.private_context:
+            self.private_context[str(user_id)] = {
                 "context": message_codec_package[
                     "context"
                 ].ContextManager(),  # 会话上下文，由于是私聊，所以无需流式上下文
                 "ai_params": {
-                    "system_instruction": default_system_instruction,
+                    "system_instruction": get_default_system_instruction(),
+                    "trigger": ["Alice"],
                 },
             }
-        return self.private_context[user_id]
-
+        return self.private_context[str(user_id)]
+    
     def write_to_temporary_file(self):
         with open(context_temp_file, "w", encoding="utf-8") as f:
             group_context = {
-                k: {
+                str(k): {
                     "context": v["context"].context,
                     "stream_context": (
                         v["stream_context"].context,
@@ -87,20 +102,22 @@ class ContextManager:
                 for k, v in self.group_context.items()
             }
             private_context = {
-                k: {"context": v["context"].context, "ai_params": v["ai_params"]}
+                str(k): {"context": v["context"].context, "ai_params": v["ai_params"]}
                 for k, v in self.private_context.items()
             }
             f.write(
                 fjson.encode(
-                    {"group_context": group_context, "private_context": private_context}
+                    {"group_context": group_context, "private_context": private_context}, multi_line=True, indent=4
                 )
             )
 
     def read_from_temporary_file(self):
         with open(context_temp_file, "r", encoding="utf-8") as f:
             context = fjson.decode(f.read())
+            self.group_context = {}
+            self.private_context = {}
             self.group_context = {
-                k: {
+                str(k): {
                     "context": message_codec_package["context"].ContextManager(
                         context=v["context"]
                     ),
@@ -115,7 +132,7 @@ class ContextManager:
                 for k, v in context["group_context"].items()
             }
             self.private_context = {
-                k: {
+                str(k): {
                     "context": message_codec_package["context"].ContextManager(
                         context=v["context"]
                     ),
@@ -125,8 +142,11 @@ class ContextManager:
             }
 
     async def get_profile(self, group_id, user_id):
+        group_profile_file = profile_path / f"{group_id}.json"
+        if not group_profile_file.exists():
+            return None
         try:
-            with open(f"profiles/{group_id}.json", "r") as f:
+            with open(group_profile_file, "r", encoding="utf-8") as f:
                 profiles = fjson.decode(f.read())
                 if profiles == None:
                     return None
@@ -134,7 +154,11 @@ class ContextManager:
                     return profiles[str(user_id)]
                 return None
         except Exception as e:
-            print("[Lagrange Core]Failed to get user profile:", traceback.format_exc())
+            log_func(
+                "WARN",
+                entity_name,
+                f"Failed to get profile: {e}",
+            )
             return None
 
     async def build_context(
@@ -150,8 +174,8 @@ class ContextManager:
     ):
         _context = context.copy()
 
-        async def build_header(user_id, user_message_id, user_sex, user_name):
-            return f'# Current User(Talking to the assistant):`[CQ:at,qq={user_id}]`\n## msgid:`[CQ:reply,id={user_message_id}]`\n## Time:{time.asctime()}\n## User Sex:{user_sex}\n## User Name:"{user_name}"\n## User Request:\n'
+        async def build_header(user_id, user_message_id, user_sex, user_name, current = False):
+            return "# Current User(Talking to the assistant):" if current else "# User:" + f'`[CQ:at,qq={user_id}]`\n## msgid:`[CQ:reply,id={user_message_id}]`\n## Time:{time.asctime()}\n## User Sex:{user_sex}\n## User Name:"{user_name}"\n## User Request:\n'
 
         profile = await self.get_profile(group_id, user_id)
 
@@ -222,7 +246,7 @@ class ContextManager:
                     "content": "# Current User Profile:"
                     + str(profile)
                     + "\n"
-                    + await build_header(user_id, user_message_id, user_sex, user_name)
+                    + await build_header(user_id, user_message_id, user_sex, user_name, True)
                     + user_request,
                 }
             )
@@ -237,7 +261,7 @@ class ContextManager:
                     "content": "# Current User Profile:"
                     + str(profile)
                     + "\n"
-                    + await build_header(user_id, user_message_id, "unknown", "unknown")
+                    + await build_header(user_id, user_message_id, "unknown", "unknown", True)
                     + user_request,
                 }
             )
@@ -252,6 +276,20 @@ class Plugin:
     @staticmethod
     def create():
         Plugin.context_manager = ContextManager()
+        try:
+            Plugin.context_manager.read_from_temporary_file()
+            log_func(
+                "INFO",
+                entity_name,
+                "Context loaded from temporary file successfully!",
+            )
+        except Exception as e:
+            log_func(
+                "WARN",
+                entity_name,
+                "Failed to load context from temporary file, creating new context...",
+            )
+            Plugin.context_manager = ContextManager()
 
         log_func(
             "INFO",
@@ -264,7 +302,19 @@ AI Chat Plugin is initialized!
 
     @staticmethod
     def destroy():
-        pass
+        try:
+            Plugin.context_manager.write_to_temporary_file()
+            log_func(
+                "INFO",
+                entity_name,
+                "Context saved to temporary file successfully!",
+            )
+        except Exception as e:
+            log_func(
+                "ERROR",
+                entity_name,
+                f"Failed to save context to temporary file! {traceback.format_exc()}",
+            )
 
     @staticmethod
     def before_reload():
@@ -287,6 +337,53 @@ AI Chat Plugin is initialized!
         return False
 
     @staticmethod
+    async def process_command(message, group_context, message_sender_func):
+        sender = message["sender"]
+        command = await message_codec_package[
+                "codec"
+            ].encode_message_to_CQ_without_At_self_and_Image_tag(
+                message["message"], message["self_id"]
+            )
+
+        command = command.strip()
+        if not command.startswith(plugin_context.bot_entity.sudo_command_trigger):
+            return
+        if not sender["user_id"] in plugin_context.bot_entity.admins:
+            await message_sender_func("Permission denied.")
+            log_func(
+                "ERROR",
+                "Bot",
+                "Permission denied for sudo command:",
+                command,
+                "because",
+                sender["user_id"],
+                "is not in the admin list.",
+            )
+            raise plugin_context.SkipFollow
+        command = command.replace(plugin_context.bot_entity.sudo_command_trigger, "", 1).strip()
+        log_func("INFO", "Bot", "Received sudo command:", command)
+
+        try:
+            command_json = fjson.decode(command)  # 解析json
+        except Exception as e:
+            log_func("ERROR", "Bot", "Failed to parse command:", e)
+            await message_sender_func("Failed to parse command.")
+            raise Exception("#sudo command is invalid: " + command)
+        try:
+            # 检查是否包含 --plugin 参数
+            if "set_trigger" in command_json:
+                group_context["ai_params"]["trigger"] = command_json["set_trigger"]
+                await message_sender_func("Set trigger successfully.")
+            if "set_instruction" in command_json:
+                group_context["ai_params"]["system_instruction"] = command_json["set_instruction"]
+                await message_sender_func("Set instruction successfully.")
+        except Exception as e:
+            log_func("ERROR", "Bot", "Failed to execute command:", e)
+            await message_sender_func(f"Failed to execute command.\n{e}")
+            raise Exception("#sudo command is invalid: " + command)
+        raise plugin_context.SkipFollow
+
+    @staticmethod
     async def on_group_message(ws, message):
         api = onebot_package["api"].OneBotAPI(plugin_context.echo_pool)
 
@@ -300,7 +397,23 @@ AI Chat Plugin is initialized!
             group_id = message["group_id"]
             group_context = Plugin.context_manager.get_group_context(group_id)
 
-            if Plugin._test_if_being_at(message["message"], message["self_id"]):
+            await Plugin.process_command(
+                message, group_context, lambda x: api.send_group_message(ws, group_id, x)
+            )
+
+            message_str = await message_codec_package[
+                "codec"
+            ].encode_message_to_CQ_without_At_self_and_Image_tag(
+                message["message"], message["self_id"]
+            )
+
+            def check_trigger(message):
+                for trigger in group_context["ai_params"]["trigger"]:
+                    if trigger in message:
+                        return True
+                return False
+
+            if Plugin._test_if_being_at(message["message"], message["self_id"]) or check_trigger(message_str):
                 log_func(
                     "INFO",
                     entity_name,
@@ -346,7 +459,38 @@ AI Chat Plugin is initialized!
                         }
                     )
 
-                    await api.send_group_message(ws, group_id, ai_response)
+                    extracted_response = template.extract_response(ai_response)
+                    log_func(
+                        "INFO",
+                        entity_name,
+                        f"Gemini AI Chat Plugin Response: {ai_response}",
+                    )
+                    await api.send_group_message(ws, group_id, extracted_response)
+            else:
 
-        # with Plugin.lock:
-        await handler()
+                group_context["stream_context"].push_message(
+                    {
+                        "role": "user",
+                        "name": message["sender"]["nickname"],
+                        "user_id": message["user_id"],
+                        "time": time.asctime(),
+                        "message_id": message["message_id"],
+                        "content": message_str,
+                    }
+                )
+
+        try:
+            await handler()
+        except plugin_context.SkipFollow: raise plugin_context.SkipFollow
+        except plugin_context.Skip: raise plugin_context.Skip
+        except Exception as e:
+            log_func(
+                "ERROR",
+                entity_name,
+                f"Failed to handle group message: {traceback.format_exc()}",
+            )
+            await api.send_group_message(
+                ws,
+                message["group_id"],
+                "AI Chat Plugin Failed to Handle Message!\n" + str(e),
+            )

@@ -102,8 +102,8 @@ class Status:
 async def process_message(ws, Bots, echo_pool, status: Status):
     while not close_event.is_set():
         try:
-            message = json.loads(await ws.recv())
-
+            message = await asyncio.wait_for(ws.recv(), timeout=10.0)
+            message = json.loads(message)
             if "status" in message and "echo" in message:
                 echo_pool.echo_dict[message["echo"]] = message
                 continue
@@ -154,13 +154,15 @@ async def process_message(ws, Bots, echo_pool, status: Status):
         except websockets.exceptions.ConnectionClosedError:
             log_func('ERROR', 'Websocket', "Connection closed in message processor")
             break
+        except asyncio.TimeoutError:
+            log_func('WARN', 'Websocket', "Message processing timeout")
+            continue
         except Exception as e:
             log_func('ERROR', 'Websocket', "Error in message processor: ", e)
             await asyncio.sleep(1)
 
 
-global_websocket = None
-
+global_websocket : websockets.WebSocketClientProtocol = None
 
 def init(status: Status):
     def update_status(width):
@@ -213,7 +215,11 @@ def init(status: Status):
         _log_func = default_log_func
         log_func('WARN', 'System', "Received close signal")
         if global_websocket:
+            # 强制关闭websocket连接
+            log_func('INFO', 'System', "Closing websocket connection")
+            global_websocket.transport.abort()
             global_websocket.transport.close()
+            log_func('INFO', 'System', "Websocket connection closed")
 
     tui = TUI.RichTUI(update_status, close_server)
 
@@ -260,6 +266,7 @@ async def server(ws_url=protocol_config.ws_url, ws_port=protocol_config.ws_port)
                 for bot in Bots:
                     bot.bot_qq = bot_qq
                     await bot.create(ws)
+
                 await process_message(ws, Bots, echo_pool, global_status)
             else:
                 log_func('ERROR', 'Websocket', "Failed to connect to bot backend: ", response)
@@ -282,7 +289,6 @@ async def server(ws_url=protocol_config.ws_url, ws_port=protocol_config.ws_port)
     echo_pool.close_event.set()
     for bot in Bots:
         await bot.destroy(ws)
-
 
 
 async def cleanup():

@@ -22,7 +22,7 @@ class ModuleLoader:
         self.module_dir = Path(module_dir)
         self.instances: Dict[str, Dict[str, Any]] = {}
         self.last_modified: Dict[str, float] = {}
-        self._watch_interval = 5.0
+        self._watch_interval = 1.0
         self._caller_id = id(self)
         self._watch_thread: Optional[threading.Thread] = None
         self._should_stop = threading.Event()
@@ -202,11 +202,13 @@ class ModuleLoader:
             return False
 
     def __del__(self):
+        self._log_func('INFO', 'Module', "Destroying ModuleLoader")
         self.stop_watching()
         self.unload_all_modules()
         self._log_func('INFO', 'Module', "ModuleLoader destroyed")
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        self._log_func('INFO', 'Module', "Exiting ModuleLoader")
         self.stop_watching()
         self.unload_all_modules()
         self._log_func('INFO', 'Module', "ModuleLoader exited")
