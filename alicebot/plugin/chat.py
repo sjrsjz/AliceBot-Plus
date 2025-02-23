@@ -310,8 +310,8 @@ This plugin is used to chat with AI.
 Commands:
 - `#context --save_all`: Save all context to temporary file.
 - `#context --load_all`: Load all context from temporary file.
-- `#context --set_trigger trigger1 trigger2 ... `: Set trigger for AI.
-- `#context --set_instruction "system instruction"`: Set instruction for AI.
+- `#sudo --set_trigger trigger1 trigger2 ... `: Set trigger for AI.
+- `#sudo --set_instruction "system instruction"`: Set instruction for AI.
 """.strip()
 
     @staticmethod
@@ -393,12 +393,11 @@ Powered by ✨Gemini-Flash-2.0
             await message_sender_func("Failed to parse command.")
             raise Exception("#sudo command is invalid: " + command)
         try:
-            # 检查是否包含 --plugin 参数
             if "set_trigger" in command_json:
                 group_context["ai_params"]["trigger"] = command_json["set_trigger"]
                 await message_sender_func("Set trigger successfully.")
             if "set_instruction" in command_json:
-                group_context["ai_params"]["system_instruction"] = command_json["set_instruction"]
+                group_context["ai_params"]["system_instruction"] = command_json["set_instruction"][0]
                 await message_sender_func("Set instruction successfully.")
         except Exception as e:
             log_func("ERROR", "Bot", "Failed to execute command:", e)
