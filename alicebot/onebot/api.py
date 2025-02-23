@@ -160,7 +160,7 @@ class OneBotAPI:
         log_func('ERROR', 'OneBot', "Failed to get group info")
         return None
 
-    async def withdraw_group_message(self, ws, message_id):
+    async def withdraw_message(self, ws, message_id):
         if self.echo_pool.echo_dict is None: raise Exception("Echo dict not set")
         if message_id is None:
             return None

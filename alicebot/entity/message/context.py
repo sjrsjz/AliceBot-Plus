@@ -1,6 +1,6 @@
 class ContextManager:
-    def __init__(self):
-        self.context = []
+    def __init__(self, context = []):
+        self.context = context
 
     def push_message(self, message):
         self.context.append(message)
@@ -30,8 +30,8 @@ class ContextManager:
 
 
 class StreamContextManager:
-    def __init__(self, max_length=50):
-        self.context = []
+    def __init__(self, context = [], max_length=50):
+        self.context = context
         self.max_length = max_length
 
     def push_message(self, message):

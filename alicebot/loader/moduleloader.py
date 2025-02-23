@@ -22,7 +22,7 @@ class ModuleLoader:
         self.module_dir = Path(module_dir)
         self.instances: Dict[str, Dict[str, Any]] = {}
         self.last_modified: Dict[str, float] = {}
-        self._watch_interval = 1.0
+        self._watch_interval = 5.0
         self._caller_id = id(self)
         self._watch_thread: Optional[threading.Thread] = None
         self._should_stop = threading.Event()
@@ -59,10 +59,16 @@ class ModuleLoader:
                             self._log_func('WARN', 'Module', f"Detected change in module {module_name}, reloading...",
                                            flush=True)
                             if self._before_reload_callback:
-                                self._before_reload_callback(module_name)
+                                try:
+                                    self._before_reload_callback(module_name)
+                                except Exception as e:
+                                    self._log_func('ERROR', 'Module', f"Error calling before_reload_callback: {str(e)}")
                             self.load_module(module_name, hot_reload=True, switch_lock=False, before_reload_callback=self._before_reload_callback, after_reload_callback=self._after_reload_callback, **self.kwargs)
                             if self._after_reload_callback:
-                                self._after_reload_callback(module_name)
+                                try:
+                                    self._after_reload_callback(module_name)
+                                except Exception as e:
+                                    self._log_func('ERROR', 'Module', f"Error calling after_reload_callback: {str(e)}")
                     except Exception as e:
                         self._log_func('ERROR', 'Module', f"Error checking module {module_name}: {str(e)}")
 

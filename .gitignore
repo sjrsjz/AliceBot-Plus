@@ -6,3 +6,5 @@ tmp
 output.png
 **/apikey.json
 .VSCodeCounter
+python_env
+**/context_temp

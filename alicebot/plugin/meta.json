@@ -7,6 +7,10 @@
         "help": {
             "active": 1,
             "permission": 0
+        },
+        "chat": {
+            "active": 1,
+            "permission": 0
         }
     }
 }
