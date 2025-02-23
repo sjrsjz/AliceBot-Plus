@@ -3,6 +3,7 @@ import sys
 import pathlib
 import websockets
 import json
+import fJson as fjson
 from typing import Optional
 import copy
 import threading
@@ -41,7 +42,36 @@ onebot_api_module = onebot_package.load_module("api", hot_reload=True, log_func=
 bot_package = moduleloader.ModuleLoader(str(pathlib.Path(__file__).parent / "entity"), log_func=log_func)
 bot_module = bot_package.load_module("bot", log_func=log_func)
 
-ws_url = "ws://192.168.31.116:8080"
+@fjson.DataClass
+class ProtocolConfig:
+    def __init__(self, ws_url: str = "ws://127.0.0.1", ws_port: int = 8080):
+        self.ws_url = ws_url
+        self.ws_port = ws_port
+
+    def load(self, config_path: str):
+        with open(config_path, 'r', encoding='utf-8') as f:
+            data = self.load_json(f.read())
+            self.ws_url = data.ws_url
+            self.ws_port = data.ws_port
+    def save(self, config_path: str):
+        with open(config_path, 'w', encoding='utf-8') as f:
+            f.write(self.json(indent=4, multi_line=True))
+
+protocol_config = ProtocolConfig()
+
+if not pathlib.Path(__file__).parent.exists():
+    pathlib.Path(__file__).parent.mkdir()
+
+try:
+    protocol_config.load(str(pathlib.Path(__file__).parent / "config" / "protocol.json"))
+except Exception as e:
+    log_func('ERROR', 'Config', f"Failed to load protocol config: {e}")
+    log_func('INFO', 'Config', "Creating default protocol config...")
+    default_config = ProtocolConfig()
+    default_config.save(str(pathlib.Path(__file__).parent / "config" / "protocol.json"))
+    log_func('INFO', 'Config', "Default protocol config created, please configure the protocol and restart the program.")
+    sys.exit(0)
+
 
 close_event = asyncio.Event()
 
@@ -206,7 +236,7 @@ def init(status: Status):
 global_status = Status()
 
 
-async def server():
+async def server(ws_url=protocol_config.ws_url, ws_port=protocol_config.ws_port):
     global_status.loop = asyncio.get_event_loop()
     init(global_status)
     log_func('INFO', 'System', "Booting up...")
@@ -216,7 +246,7 @@ async def server():
 
     while not close_event.is_set():
         try:
-            ws = await websockets.connect(ws_url, ping_interval=None, ping_timeout=None)
+            ws = await websockets.connect(f"{ws_url}:{ws_port}", ping_interval=None, ping_timeout=None)
             global global_websocket
             global_websocket = ws
 
@@ -227,13 +257,9 @@ async def server():
             if "self_id" in response:
                 bot_qq = response["self_id"]
                 log_func('INFO', 'Websocket', "Connected to bot backend successfully")
-                group_list = json.loads(await onebot_api_module.OneBotAPI(echo_pool).get_bot_group_list(ws, False))
-                log_func('INFO', 'Websocket', "Bot group list: length", len(group_list['data']))
-
                 for bot in Bots:
                     bot.bot_qq = bot_qq
                     await bot.create(ws)
-
                 await process_message(ws, Bots, echo_pool, global_status)
             else:
                 log_func('ERROR', 'Websocket', "Failed to connect to bot backend: ", response)
@@ -277,7 +303,7 @@ def signal_handler():
 async def main():
     try:
 
-        await server()
+        await server(ws_url=protocol_config.ws_url, ws_port=protocol_config.ws_port)
     except Exception as e:
         log_func('ERROR', 'System', f'Error in main: {e}')
     finally:
