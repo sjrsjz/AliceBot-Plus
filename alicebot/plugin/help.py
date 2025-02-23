@@ -20,10 +20,23 @@ AliceBot+ Framework Help
     + --enable: enable plugin.
     + --disable: disable plugin.
     > Example: #sudo --plugin --enable test
+- #plugin
+    + --ls: list all plugins.
+    + --help <plugin_name>: show plugin help message.
+    + --description <plugin_name>: show plugin description.
+    > Example: #plugin --help test
 '''
 
 
 class Plugin:
+    @staticmethod
+    def help():
+        return bot_help.strip()
+
+    @staticmethod
+    def description():
+        return r'''Just a help plugin.'''
+
     @staticmethod
     def create():
         log_func('INFO', 'Help', r'''

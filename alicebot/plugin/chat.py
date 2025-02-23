@@ -301,6 +301,29 @@ AI Chat Plugin is initialized!
         )
 
     @staticmethod
+    def help():
+        return r"""
+AI Chat Plugin
+================
+This plugin is used to chat with AI.
+
+Commands:
+- `#context --save_all`: Save all context to temporary file.
+- `#context --load_all`: Load all context from temporary file.
+- `#context --set_trigger trigger1 trigger2 ... `: Set trigger for AI.
+- `#context --set_instruction "system instruction"`: Set instruction for AI.
+""".strip()
+
+    @staticmethod
+    def description():
+        return r"""
+AI Chat Plugin
+================
+This plugin is used to chat with AI.
+Powered by ✨Gemini-Flash-2.0
+""".strip()
+
+    @staticmethod
     def destroy():
         try:
             Plugin.context_manager.write_to_temporary_file()
@@ -337,7 +360,7 @@ AI Chat Plugin is initialized!
         return False
 
     @staticmethod
-    async def process_command(message, group_context, message_sender_func):
+    async def process_sudo_command(message, group_context, message_sender_func):
         sender = message["sender"]
         command = await message_codec_package[
                 "codec"
@@ -384,6 +407,47 @@ AI Chat Plugin is initialized!
         raise plugin_context.SkipFollow
 
     @staticmethod
+    async def process_context_command(message, message_sender_func, context):
+        command = await message_codec_package[
+                "codec"
+            ].encode_message_to_CQ_without_At_self_and_Image_tag(
+                message["message"], message["self_id"]
+            )
+
+        command = command.strip()
+        trigger = "#context "
+        if not command.startswith(trigger):
+            return
+
+        command = command.replace(trigger, "", 1).strip()
+        log_func("INFO", "Bot", "Received context command:", command)
+
+        try:
+            command_json = fjson.decode(command)  # 解析json
+        except Exception as e:
+            log_func("ERROR", "Bot", "Failed to parse command:", e)
+            await message_sender_func("Failed to parse command.")
+            raise Exception("#sudo command is invalid: " + command)
+        try:
+            if "save_all" in command_json:
+                Plugin.context_manager.write_to_temporary_file()
+                await message_sender_func("Save context successfully.")
+            if "load_all" in command_json:
+                Plugin.context_manager.read_from_temporary_file()
+                await message_sender_func("Load context successfully.")
+            if "clear" in command_json:
+                context['context'].clear()
+                await message_sender_func("Clear context successfully.")
+                
+
+        except Exception as e:
+            log_func("ERROR", "Bot", "Failed to execute command:", e)
+            await message_sender_func(f"Failed to execute command.\n{e}")
+            raise Exception("#sudo command is invalid: " + command)
+        raise plugin_context.SkipFollow
+
+
+    @staticmethod
     async def on_group_message(ws, message):
         api = onebot_package["api"].OneBotAPI(plugin_context.echo_pool)
 
@@ -397,8 +461,11 @@ AI Chat Plugin is initialized!
             group_id = message["group_id"]
             group_context = Plugin.context_manager.get_group_context(group_id)
 
-            await Plugin.process_command(
+            await Plugin.process_sudo_command(
                 message, group_context, lambda x: api.send_group_message(ws, group_id, x)
+            )
+            await Plugin.process_context_command(
+                message, lambda x: api.send_group_message(ws, group_id, x), group_context
             )
 
             message_str = await message_codec_package[
@@ -417,7 +484,7 @@ AI Chat Plugin is initialized!
                 log_func(
                     "INFO",
                     entity_name,
-                    f"Received a message from group {group_id}, being at.",
+                    f"Received a message from group {group_id}, being at.\n{message_str}",
                 )
                 message_id = await api.send_group_message(
                     ws, group_id, "我正在思考如何回复你..."

@@ -59,6 +59,69 @@ class Bot:
         self.admins = []
         self.bot_config_path = pathlib.Path(__file__).parent.parent / "config"
         self.sudo_command_trigger = "#sudo"
+        self.plugin_command_trigger = "#plugin"
+
+    async def plugin_command(
+        self,
+        ws: websockets.WebSocketClientProtocol,
+        command: str,
+        message_sender_func,
+    ):
+        command = command.strip()
+        if not command.startswith(self.plugin_command_trigger):
+            return
+        command = command.replace(self.plugin_command_trigger, "", 1).strip()
+        log_func("INFO", "Bot", "Received plugin command:", command)
+
+        try:
+            command_json = fjson.decode(command)  # 解析json
+        except Exception as e:
+            log_func("ERROR", "Bot", "Failed to parse command:", e)
+            await message_sender_func("Failed to parse command.")
+            raise Exception("#plugin command is invalid: " + command)
+        try:
+            if "help" in command_json:
+                plugin_names = command_json["help"]
+                # 检查模块是否存在，如果存在检查是否有 Plugin.help 方法
+                for plugin_name in plugin_names:
+                    if plugin_name not in self.plugin_package.get_all_modules():
+                        await message_sender_func(f"Plugin {plugin_name} not found.")
+                        continue
+                    plugin = self.plugin_package.get_module(plugin_name).Plugin
+                    if not hasattr(plugin, "help"):
+                        await message_sender_func(f"Plugin {plugin_name} has no help method.")
+                        continue
+                    await message_sender_func(plugin.help())
+                return
+            if "description" in command_json:
+                plugin_names = command_json["description"]
+                for plugin_name in plugin_names:
+                    if plugin_name not in self.plugin_package.get_all_modules():
+                        await message_sender_func(f"Plugin {plugin_name} not found.")
+                        continue
+                    plugin = self.plugin_package.get_module(plugin_name).Plugin
+                    if not hasattr(plugin, "description"):
+                        await message_sender_func(
+                            f"Plugin {plugin_name} has no description method."
+                        )
+                        continue
+                    await message_sender_func(
+                        f"Plugin {plugin_name}:\n{plugin.description()}"
+                    )
+                    await asyncio.sleep(1)
+                return
+            if "ls":
+                plugin_list = "All plugins:\n"
+                for plugin_name in self.plugin_package.get_all_modules().keys():
+                    plugin_list += f"- {'[x]' if self.plugin_meta.get_plugin_status(plugin_name) == Bot.PluginStatus.ACTIVE else '[ ]'} {plugin_name}\n"
+                await message_sender_func(plugin_list.strip())
+                return
+            await message_sender_func("Unknown command.")
+            raise Exception("#plugin command is invalid: " + command)
+        except Exception as e:
+            log_func("ERROR", "Bot", "Error in plugin command:", e)
+            await message_sender_func(f"Error in plugin command.\n{e}")
+            raise e
 
     async def sudo_command(
         self,
@@ -152,6 +215,11 @@ class Bot:
             message_str,
             lambda x: api.send_group_message(ws, message["group_id"], x),
             message["sender"],
+        )
+        await self.plugin_command(
+            ws,
+            message_str,
+            lambda x: api.send_group_message(ws, message["group_id"], x),
         )
 
     async def create(self, ws: websockets.WebSocketClientProtocol):

@@ -21,9 +21,9 @@
 - [x] 文档渲染器 (支持 Markdown/HTML/LaTeX/Typst，基于无头浏览器)
 - [x] 网页搜索、读取解析
 - [x] 插件系统
-- [ ] 上下文管理器 (仍未完成迁移)
-- [ ] AI 模型支持 (仍未完成迁移)
-- [ ] 复杂指令解析 (仍未完成迁移)
+- [x] 上下文管理器
+- [x] AI 模型支持 (富文本输出和函数调用仍未完成)
+- [x] 复杂指令解析
 - [ ] 私聊消息处理 
 
 ## 🚀快速开始
@@ -104,6 +104,14 @@ This is a test plugin for AliceBot+.
 ''') # 记录日志
 
 class Plugin: # 插件类（必须）
+    @staticmethod
+    def help(): # 帮助信息
+        return 'Help message.'
+
+    @staticmethod
+    def description(): # 插件描述
+        return 'Test plugin.'
+
     @staticmethod
     def create(): # 插件创建时调用
         log_func('INFO', 'TEST', "Plugin created.")
