@@ -2,6 +2,8 @@ import pathlib
 import fJson as fjson
 import time
 import traceback
+import base64
+import os
 from threading import Lock
 from typing import Callable, Any
 
@@ -27,6 +29,17 @@ aibackend_package = moduleloader.ModuleLoader(
 aibackend_package.load_module(
     "gemini", hot_reload=True, log_func=log_func
 )  # AI Backend
+aibackend_package.load_module(
+    "tts", hot_reload=True, log_func=log_func
+)  # AI Backend
+
+
+document_renderer_package = moduleloader.ModuleLoader(
+    plugin_context.document_renderer_package_path, log_func=log_func
+)
+document_renderer = document_renderer_package.load_module(
+    "renderer", hot_reload=True, log_func=log_func
+)
 
 
 prompt_package = moduleloader.ModuleLoader(
@@ -39,6 +52,11 @@ example_prompt_package = moduleloader.ModuleLoader(
 )
 example_prompt_package.load_module("Alice", hot_reload=True, log_func=log_func)
 
+example_typeset_package = moduleloader.ModuleLoader(
+    plugin_context.prompt_package_path / "example" / "typeset", log_func=log_func
+)
+example_typeset_package.load_module("QQBot", hot_reload=True, log_func=log_func)
+
 entity_name = "Chat"
 
 
@@ -49,7 +67,10 @@ context_temp_file = context_temp_path / "context_temp.fjson"
 profile_path = pathlib.Path(__file__).parent / "profiles"
 
 def get_default_system_instruction():
-    return example_prompt_package["Alice"].character
+    return template.COT_template(
+        example_typeset_package["QQBot"].typesets,
+        example_prompt_package["Alice"].character,
+    )
 
 class ContextManager:
     def __init__(self):
@@ -87,7 +108,7 @@ class ContextManager:
                 },
             }
         return self.private_context[str(user_id)]
-    
+
     def write_to_temporary_file(self):
         with open(context_temp_file, "w", encoding="utf-8") as f:
             group_context = {
@@ -142,7 +163,7 @@ class ContextManager:
             }
 
     async def get_profile(self, group_id, user_id):
-        group_profile_file = profile_path / f"{group_id}.json"
+        group_profile_file = profile_path / f"group_{group_id}.json"
         if not group_profile_file.exists():
             return None
         try:
@@ -181,7 +202,7 @@ class ContextManager:
 
         if group_id:
             try:
-                group_member_list = await api.get_member_list(ws, group_id)
+                group_member_list = await api.get_member_list(group_id)
             except:
                 group_member_list = []
             if len(group_member_list) <= 200:
@@ -225,7 +246,7 @@ class ContextManager:
                 },
             )
 
-        user_info = await api.get_stranger_info(ws, user_id)
+        user_info = await api.get_stranger_info(user_id)
 
         if user_info != None:
             if "sex" in user_info:
@@ -267,6 +288,72 @@ class ContextManager:
             )
 
         return _context, chat_request
+
+
+def get_typeset_handler(api, browser, template):
+    async def handle_shut_up(
+        x: dict, group_id: int, **kwargs
+    ) -> tuple[str, str]:
+        user = x["user_id"]
+        time = x["minutes"]
+        time = 10 if time > 10 else (time if time > 0 else 1)
+        await api.set_group_ban(group_id, user, time * 60)
+        return f" 已禁言[CQ:at,qq={user}]{time}分钟 "
+
+    async def handle_write_file(x: dict, **kwargs) -> str:
+        content = x["content"]
+        file_name = x["filename"]
+
+        with open(profile_path / file_name, "w", encoding="utf-8") as f:
+            f.write(content)
+        return f" [{file_name}]已保存 "
+
+    async def handle_tts(x: dict, **kwargs) -> str:
+        text = x["text"]
+        emotion = x.get("emotion", "")
+        log_func("INFO", entity_name, f"Text to speech: {text}")
+        result = await aibackend_package['tts'].text_to_speech_cosyvoice(text, emotion)
+        result = base64.b64encode(result).decode()
+        return f"[CQ:record,file=base64://{result}]"
+
+    async def handle_wolfram(x: dict, markdown: bool, **kwargs) -> str:
+        cal = x["script"]
+        result = await document_renderer_package['renderer'].wolfram_alpha.wolfram_alpha_compute(cal, image_only=True)
+
+        if markdown:
+            return "\n" + await document_renderer_package['renderer'].format_to_HTML(result) + "\n"
+        formatted = "\n" + await document_renderer_package['renderer'].format_to_CQ(result) + "\n"
+        return formatted if formatted is not None else "Failed to calculate"
+
+    async def handle_markdown_render(
+        x: dict, _FUNCTION_HANDLERS = None, markdown = False, **kwargs
+    ) -> str:
+        try:
+            markdown_str = x["content"]
+            markdown_str = await template.process_chatbot_typeset(
+                markdown_str,
+                FUNCTION_HANDLERS=_FUNCTION_HANDLERS,
+                markdown = True,
+                _FUNCTION_HANDLERS=_FUNCTION_HANDLERS,
+                **kwargs,
+            )
+            result = await document_renderer_package["renderer"].MarkdownRenderer(
+                browser
+            )(markdown_str)
+            if result is None:
+                return "Failed to render Markdown"
+            return f"[CQ:image,file=base64://{base64.b64encode(result).decode()},id=40000]"
+        except Exception as e:
+            log_func("ERROR", entity_name, f"Failed to render markdown: {e}")
+            return markdown_str
+
+    return {
+        "DocumentRender": handle_markdown_render,
+        "shut_up": handle_shut_up,
+        "write_to_file": handle_write_file,
+        "text_to_speech": handle_tts,
+        "display_wolframalpha": handle_wolfram,
+    }
 
 
 class Plugin:
@@ -448,11 +535,11 @@ Powered by ✨Gemini-Flash-2.0
 
     @staticmethod
     async def on_group_message(ws, message):
-        api = onebot_package["api"].OneBotAPI(plugin_context.echo_pool)
+        api = onebot_package["api"].OneBotAPI(ws, plugin_context.echo_pool)
 
         async def timeout_callback():
             await api.send_group_message(
-                ws, message["group_id"], "AI Chat Plugin Timeout!"
+                message["group_id"], "AI Chat Plugin Timeout!"
             )
 
         @plugin_context.timeout(600, timeout_callback=timeout_callback)
@@ -461,10 +548,10 @@ Powered by ✨Gemini-Flash-2.0
             group_context = Plugin.context_manager.get_group_context(group_id)
 
             await Plugin.process_sudo_command(
-                message, group_context, lambda x: api.send_group_message(ws, group_id, x)
+                message, group_context, lambda x: api.send_group_message(group_id, x)
             )
             await Plugin.process_context_command(
-                message, lambda x: api.send_group_message(ws, group_id, x), group_context
+                message, lambda x: api.send_group_message(group_id, x), group_context
             )
 
             message_str = await message_codec_package[
@@ -486,7 +573,7 @@ Powered by ✨Gemini-Flash-2.0
                     f"Received a message from group {group_id}, being at.\n{message_str}",
                 )
                 message_id = await api.send_group_message(
-                    ws, group_id, "我正在思考如何回复你..."
+                    group_id, "我正在思考如何回复你..."
                 )
                 message_str = await message_codec_package[
                     "codec"
@@ -509,9 +596,12 @@ Powered by ✨Gemini-Flash-2.0
                     ai_context, group_context["ai_params"]["system_instruction"]
                 )
 
-                await api.withdraw_message(ws, message_id)
+                template = prompt_package["template"]
+
+                await api.withdraw_message(message_id)
 
                 if ai_response != None:
+
                     group_context["context"].push_message(
                         {
                             "role": "user",
@@ -525,13 +615,35 @@ Powered by ✨Gemini-Flash-2.0
                         }
                     )
 
-                    extracted_response = template.extract_response(ai_response)
+
                     log_func(
                         "INFO",
                         entity_name,
                         f"Gemini AI Chat Plugin Response: {ai_response}",
                     )
-                    await api.send_group_message(ws, group_id, extracted_response)
+
+                    extracted_response = template.extract_response(ai_response)
+
+                    try:
+                        FUNCTION_HANDLERS=get_typeset_handler(
+                                api, plugin_context.bot_entity.browser, template
+                            )
+                        processed_response = await template.process_chatbot_typeset(
+                            extracted_response,
+                            FUNCTION_HANDLERS,
+                            markdown=False,
+                            group_id=group_id,
+                            _FUNCTION_HANDLERS = FUNCTION_HANDLERS
+                        )
+                    except Exception as e:
+                        log_func(
+                            "ERROR",
+                            entity_name,
+                            f"Failed to process chatbot typeset: {traceback.format_exc()}",
+                        )
+                        processed_response = extracted_response
+
+                    await api.send_group_message(group_id, processed_response)
             else:
 
                 group_context["stream_context"].push_message(
@@ -556,7 +668,6 @@ Powered by ✨Gemini-Flash-2.0
                 f"Failed to handle group message: {traceback.format_exc()}",
             )
             await api.send_group_message(
-                ws,
                 message["group_id"],
                 "AI Chat Plugin Failed to Handle Message!\n" + str(e),
             )

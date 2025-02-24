@@ -18,6 +18,7 @@ onebot_package_path = pathlib.Path(__file__).parent.parent / "onebot"
 aibackend_package_path = pathlib.Path(__file__).parent.parent / "aibackend"
 message_codec_package_path = pathlib.Path(__file__).parent / "message"
 prompt_package_path = pathlib.Path(__file__).parent.parent / "prompts"
+document_renderer_package_path = pathlib.Path(__file__).parent.parent / "DocumentRenderer"
 
 onebot_package = moduleloader.ModuleLoader(str(onebot_package_path), log_func=log_func)
 onebot_api_module = onebot_package.load_module(
@@ -30,6 +31,14 @@ message_codec_package = moduleloader.ModuleLoader(
 message_codec = message_codec_package.load_module(
     "codec", hot_reload=True, log_func=log_func
 )
+
+document_renderer_package = moduleloader.ModuleLoader(
+    str(document_renderer_package_path), log_func=log_func
+)
+document_renderer = document_renderer_package.load_module(
+    "renderer", hot_reload=True, log_func=log_func
+)
+
 
 from util.timeout import timeout
 
@@ -203,7 +212,7 @@ class Bot:
             except Exception as e:
                 log_func("ERROR", "Bot", "Error in plugin", plugin_name, ":", e)
 
-        api = onebot_package["api"].OneBotAPI(self.echo_pool)
+        api = onebot_package["api"].OneBotAPI(ws, self.echo_pool)
 
         message_str = await message_codec_package[
             "codec"
@@ -213,13 +222,13 @@ class Bot:
         await self.sudo_command(
             ws,
             message_str,
-            lambda x: api.send_group_message(ws, message["group_id"], x),
+            lambda x: api.send_group_message(message["group_id"], x),
             message["sender"],
         )
         await self.plugin_command(
             ws,
             message_str,
-            lambda x: api.send_group_message(ws, message["group_id"], x),
+            lambda x: api.send_group_message(message["group_id"], x),
         )
 
     async def create(self, ws: websockets.WebSocketClientProtocol):
@@ -316,6 +325,7 @@ class Bot:
                     message_codec_package_path=message_codec_package_path,
                     aibackend_package_path=aibackend_package_path,
                     prompt_package_path=prompt_package_path,
+                    document_renderer_package_path=document_renderer_package_path,
                 ):
                     self.bot_entity = bot_entity
                     self.plugin_meta = plugin_meta
@@ -327,6 +337,7 @@ class Bot:
                     self.message_codec_package_path = message_codec_package_path
                     self.aibackend_package_path = aibackend_package_path
                     self.prompt_package_path = prompt_package_path
+                    self.document_renderer_package_path = document_renderer_package_path
 
             self.plugin_package.load_module(
                 plugin_name,
@@ -349,6 +360,7 @@ class Bot:
                     message_codec_package_path,
                     aibackend_package_path,
                     prompt_package_path,
+                    document_renderer_package_path,
                 ),
             )
 
@@ -366,6 +378,7 @@ class Bot:
         class BotConfig:
             def __init__(self):
                 self.admins = []
+                self.browser_path = "/usr/bin/chromium"
 
             def save(self, path: str):
                 with open(path, "w", encoding="utf-8") as f:
@@ -381,6 +394,7 @@ class Bot:
                         config = cls()
                         if data:
                             config.admins = data.get("admins", [])
+                            config.browser_path = data.get("browser_path", "/usr/bin/chromium")
                         return config
                 except Exception as e:
                     log_func("ERROR", "Config", f"Failed to load config: {e}")
@@ -396,6 +410,10 @@ class Bot:
         self.bot_config = BotConfig.load(self.bot_config_path)
         self.admins = self.bot_config.admins
 
+        log_func("INFO", "Bot", "Initializing headless browser...")
+        self.browser = await document_renderer_package["renderer"].setup_browser(self.bot_config.browser_path)
+        log_func("INFO", "Bot", "Headless browser initialized.")
+
         log_func("INFO", "Bot", "Bot entity created.")
 
     async def destroy(self, ws: websockets.WebSocketClientProtocol):
@@ -407,6 +425,16 @@ class Bot:
                 log_func("INFO", "Plugin", "Plugin", plugin_name, "destroyed")
             except Exception as e:
                 log_func("ERROR", "Plugin", "Destroy plugin", plugin_name, "failed:", e)
+
+        log_func("INFO", "Bot", "Closing headless browser...")
+        if hasattr(self, "browser") and self.browser:
+            for page in await self.browser.pages():
+                await page.close()
+            await self.browser.close()
+            # 等待一小段时间确保进程完全关闭
+            await asyncio.sleep(0.5)
+        log_func("INFO", "Bot", "Headless browser closed.")
+
         self.plugin_package = None
         self.plugin_meta.save()
         self.plugin_meta = None

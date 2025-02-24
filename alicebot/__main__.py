@@ -44,15 +44,13 @@ bot_module = bot_package.load_module("bot", log_func=log_func)
 
 @fjson.DataClass
 class ProtocolConfig:
-    def __init__(self, ws_url: str = "ws://127.0.0.1", ws_port: int = 8080):
+    def __init__(self, ws_url: str = "ws://127.0.0.1:8080"):
         self.ws_url = ws_url
-        self.ws_port = ws_port
 
     def load(self, config_path: str):
         with open(config_path, 'r', encoding='utf-8') as f:
             data = self.load_json(f.read())
             self.ws_url = data.ws_url
-            self.ws_port = data.ws_port
     def save(self, config_path: str):
         with open(config_path, 'w', encoding='utf-8') as f:
             f.write(self.json(indent=4, multi_line=True))
@@ -242,7 +240,7 @@ def init(status: Status):
 global_status = Status()
 
 
-async def server(ws_url=protocol_config.ws_url, ws_port=protocol_config.ws_port):
+async def server(ws_url=protocol_config.ws_url):
     global_status.loop = asyncio.get_event_loop()
     init(global_status)
     log_func('INFO', 'System', "Booting up...")
@@ -252,7 +250,7 @@ async def server(ws_url=protocol_config.ws_url, ws_port=protocol_config.ws_port)
 
     while not close_event.is_set():
         try:
-            ws = await websockets.connect(f"{ws_url}:{ws_port}", ping_interval=None, ping_timeout=None)
+            ws = await websockets.connect(ws_url, ping_interval=None, ping_timeout=None)
             global global_websocket
             global_websocket = ws
 
@@ -292,13 +290,28 @@ async def server(ws_url=protocol_config.ws_url, ws_port=protocol_config.ws_port)
 
 
 async def cleanup():
-    log_func('INFO', 'System', "Cleaning up...")
-    tasks = [task for task in asyncio.all_tasks()
-             if task is not asyncio.current_task()]
+    log_func("INFO", "System", "Cleaning up...")
+    tasks = [task for task in asyncio.all_tasks() if task is not asyncio.current_task()]
+
     for task in tasks:
         task.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
-    log_func('INFO', 'System', "Cleanup completed")
+
+    try:
+        await asyncio.wait(tasks, timeout=5.0)
+    except asyncio.TimeoutError:
+        log_func("WARN", "System", "Timeout waiting for tasks to cancel")
+    except Exception as e:
+        log_func("ERROR", "System", f"Error during cleanup: {e}")
+
+    try:
+        loop = asyncio.get_event_loop()
+        await loop.shutdown_asyncgens()
+        if sys.platform == "win32":
+            loop._signal_handlers.clear()
+    except Exception as e:
+        log_func("ERROR", "System", f"Error during event loop cleanup: {e}")
+
+    log_func("INFO", "System", "Cleanup completed")
 
 
 def signal_handler():
@@ -309,7 +322,7 @@ def signal_handler():
 async def main():
     try:
 
-        await server(ws_url=protocol_config.ws_url, ws_port=protocol_config.ws_port)
+        await server(ws_url=protocol_config.ws_url)
     except Exception as e:
         log_func('ERROR', 'System', f'Error in main: {e}')
     finally:

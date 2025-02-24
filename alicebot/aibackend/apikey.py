@@ -10,6 +10,8 @@ class ApiKey:
     def __init__(self):
         self.gemini = []
         self.gemini_index = 0
+        self.tts = []
+        self.tts_index = 0
 
     def save(self, path: str):
         """保存配置到文件"""
@@ -29,6 +31,8 @@ class ApiKey:
                 if data:
                     config.gemini = data.get("gemini", [])
                     config.gemini_index = data.get("gemini_index", 0)
+                    config.tts = data.get("tts", [])
+                    config.tts_index = data.get("tts_index", 0)
                 return config
         except Exception as e:
             print(f"[ApiKey] Failed to load config: {e}")
@@ -41,6 +45,12 @@ class ApiKey:
         self.gemini_index = (self.gemini_index + 1) % len(self.gemini)
         return key
 
+    def key_tts(self):
+        if not self.tts:
+            return None
+        key = self.tts[self.tts_index]
+        self.tts_index = (self.tts_index + 1) % len(self.tts)
+        return key
 
 if not os.path.exists(__key_dir):
     os.makedirs(__key_dir)

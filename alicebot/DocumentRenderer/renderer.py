@@ -13,6 +13,7 @@ import markdown
 from markdown.extensions import Extension
 from markdown.inlinepatterns import SimpleTagPattern
 from markdown.blockprocessors import BlockProcessor
+from markdown.preprocessors import Preprocessor
 import base64
 import xml.etree.ElementTree as ET
 import threading
@@ -36,21 +37,26 @@ typst_render = package.load_module("typst_render", log_func=log_func)
 safe_python_executor = package.load_module("safe_python_executor", log_func=log_func)
 
 
-async def setup_browser():
+async def setup_browser(browser_path):
     try:
         cache_dir = "./.pyppeteer"
         if not os.path.exists(cache_dir):
             os.makedirs(cache_dir)
         if sys.platform.startswith("linux"):
-            browser = await launch(headless=True, executablePath="/usr/bin/chromium-browser", dumpio=True,
-                                   args=['--no-sandbox', '--disable-setuid-sandbox'], userDataDir=cache_dir)
+            browser = await launch(
+                headless=True,
+                executablePath=browser_path,
+                dumpio=True,
+                args=["--no-sandbox", "--disable-setuid-sandbox"],
+                userDataDir=cache_dir,
+            )
             return browser
         else:
             browser = await launch(headless=True, dumpio=True, userDataDir=cache_dir)
         return browser
     except Exception as e:
         log_func('ERROR', 'WebSearch', "Chrome not found, using Edge instead")
-        edge_path = os.environ.get("EDGE_PATH", "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe")
+        edge_path = os.environ.get("EDGE_PATH", browser_path)
         browser = await launch(headless=True, executablePath=edge_path)
         return browser
 
@@ -542,6 +548,30 @@ def MarkdownRenderer(browser):
                         html = convert_markdown_to_html(cell.strip())
                         cell_elem.text = html
 
+        class ChecklistPreprocessor(Preprocessor):
+            """处理复选框语法"""
+
+            def run(self, lines):
+                new_lines = []
+                for line in lines:
+                    if line.strip().startswith("- [ ]"):
+                        line = line.replace("- [ ]", '<input type="checkbox" disabled> ')
+                    elif line.strip().startswith("- [x]") or line.strip().startswith("- [X]"):
+                        line = line.replace(
+                            "- [x]", '<input type="checkbox" checked disabled> '
+                        )
+                        line = line.replace(
+                            "- [X]", '<input type="checkbox" checked disabled> '
+                        )
+                    new_lines.append(line)
+                return new_lines
+
+        class ChecklistExtension(Extension):
+            """Checklist Extension"""
+
+            def extendMarkdown(self, md):
+                md.preprocessors.register(_MarkdownRenderer.ChecklistPreprocessor(md), "checklist", 27)
+
     def convert_markdown_to_html(text):
         try:
             html_replacements.append([])
@@ -616,18 +646,39 @@ def MarkdownRenderer(browser):
             for placeholder, code_block in placeholders.items():
                 text = text.replace(placeholder, code_block)
 
-            md = markdown.Markdown(extensions=[
-                "extra", "smarty", "toc", "tables", "attr_list",
-                "def_list", "admonition", "meta", "nl2br", "sane_lists", "wikilinks",
-                "fenced_code", "abbr", "footnotes", "md_in_html",
-                _MarkdownRenderer.DelExtension(), _MarkdownRenderer.InsExtension(), _MarkdownRenderer.SubExtension(),
-                _MarkdownRenderer.SupExtension(),
-                _MarkdownRenderer.MarkExtension(), _MarkdownRenderer.UnderlineExtension(),
-                _MarkdownRenderer.SmallExtension(), _MarkdownRenderer.TtExtension(),
-                "markdown_checklist.extension", _MarkdownRenderer.ImgExtension(), _MarkdownRenderer.TableExtension(),
-                _MarkdownRenderer.WolframAlphaExtension(), _MarkdownRenderer.PieChartExtension(),
-                _MarkdownRenderer.FontExtension()
-            ])
+            md = markdown.Markdown(
+                extensions=[
+                    "extra",
+                    "smarty",
+                    "toc",
+                    "tables",
+                    "attr_list",
+                    "def_list",
+                    "admonition",
+                    "meta",
+                    "nl2br",
+                    "sane_lists",
+                    "wikilinks",
+                    "fenced_code",
+                    "abbr",
+                    "footnotes",
+                    "md_in_html",
+                    _MarkdownRenderer.DelExtension(),
+                    _MarkdownRenderer.InsExtension(),
+                    _MarkdownRenderer.SubExtension(),
+                    _MarkdownRenderer.SupExtension(),
+                    _MarkdownRenderer.MarkExtension(),
+                    _MarkdownRenderer.UnderlineExtension(),
+                    _MarkdownRenderer.SmallExtension(),
+                    _MarkdownRenderer.TtExtension(),
+                    _MarkdownRenderer.ChecklistExtension(),
+                    _MarkdownRenderer.ImgExtension(),
+                    _MarkdownRenderer.TableExtension(),
+                    _MarkdownRenderer.WolframAlphaExtension(),
+                    _MarkdownRenderer.PieChartExtension(),
+                    _MarkdownRenderer.FontExtension(),
+                ]
+            )
             md.set_output_format("html")
             html = md.convert(text)
 
@@ -655,197 +706,162 @@ def MarkdownRenderer(browser):
         html = queue.get()
 
         global_styles = """
-        <style>
-            body {
-                font-family: 'Fira Code', sans-serif; /* 设置默认字体 */
-                -webkit-font-smoothing: antialiased;
-                font-smooth: always;
-            }
-            a {
-                color: #32CD32; /* 设置超链接颜色 */
-            }
-            table {
-                border-collapse: collapse;
-                width: 100%;
-            }
-            th, td {
-                border: 1px solid #ddd;
-                padding: 8px;
-            }
-            th {
-                background-color: #f2f2f2;
-                text-align: left;
-            }
-            tr:nth-child(even) {
-                background-color: #f2f2f2;
-            }
-            .table {
-                width: 100%;
-                border-collapse: collapse;
-            }
-            .table-row {
-                border-bottom: 1px solid #ddd;
-            }
-            .table-cell {
-                padding: 8px;
-            }
-            pre {
-                background-color: #f2f2f2;
-                padding: 10px;
-                border-radius: 5px;
-                white-space: pre-wrap;       /* CSS3 */
-                white-space: -moz-pre-wrap;  /* Firefox */
-                white-space: -pre-wrap;      /* Opera <7 */
-                white-space: -o-pre-wrap;    /* Opera 7 */
-                word-wrap: break-word;       /* IE */
-                overflow-x: auto;            /* Horizontal scroll */
-                line-height: 1.25;
-                font-size: 18px;
-                font-family: 'Fira Code', monospace;
-            }
-            blockquote {
-                border-left: 4px solid #ccc;
-                padding-left: 16px;
-                color: #666;
-                margin: 0;
-            }
-            ul, ol {
-                margin-left: 20px; /* 设置列表缩进 */
-            }
-            del {
-                text-decoration: line-through;
-            }
-            ins {
-                text-decoration: underline;
-            }
-            sub {
-                vertical-align: sub;
-                font-size: smaller;
-            }
-            sup {
-                vertical-align: super;
-                font-size: smaller;
-            }
-            mark {
-                background-color: #ff0;
-            }
-            u {
-                text-decoration: underline;
-            }
-            small {
-                font-size: smaller;
-            }
-            tt {
-                font-family: 'Fira Code', monospace;
-            }
-            img {
-                max-width: 100%;
-                height: auto;
-            }
-            .center {
-                text-align: center;
-            }
-            .right {
-                text-align: right;
-            }
-            .left {
-                text-align: left;
-            }
-            .justify {
-                text-align: justify;
-            }
-            code {
-                background-color: #f2f2f2;
-                padding: 2px 4px;
-                border-radius: 3px;
-            }
-            alert {
-                padding: 15px;
-                margin-bottom: 20px;
-                border: 1px solid transparent;
-                border-radius: 4px;
-            }
-            alert-info {
-                color: #31708f;
-                background-color: #d9edf7;
-                border-color: #bce8f1;
-            }
-            alert-warning {
-                color: #8a6d3b;
-                background-color: #fcf8e3;
-                border-color: #faebcc;
-            }
-            alert-danger {
-                color: #a94442;
-                background-color: #f2dede;
-                border-color: #ebccd1;
-            }
-            alert-success {
-                color: #3c763d;
-                background-color: #dff0d8;
-                border-color: #d6e9c6;
-            }
-            pre code {
-                background-color: #f2f2f2;
-                border-radius: 5px;
-            }
-            pre code::before {
-                content: '';
-            }
-            pre code::after {
-                content: '';
-            }
-            pre code span {
-                display: inline;
-            }
-            pre code span::before {
-                content: '';
-            }
-            pre code span::after {
-                content: '';
-            }
-            pre code span::selection {
-                background-color: transparent;
-            }
-            pre code span::-moz-selection {
-                background-color: transparent;
-            }
-            pre code span::-webkit-selection {
-                background-color: transparent;
-            }
-            pre code span::-ms-selection {
-                background-color: transparent;
-            }
-            pre code span::placeholder {
-                color: transparent;
-            }
-            pre code span::-moz-placeholder {
-                color: transparent;
-            }
-            pre code span::-webkit-placeholder {
-                color: transparent; 
-            }
-            pre code span::-ms-placeholder {
-                color: transparent;
-            }
-            details {
-                display: block;
-            }
-
-            details > * {
-                display: block;
-            }
-
-            details[open] {
-                display: block;
-            }
-
-            details:not([open])::before {
-                content: " ";
-                display: block;
-                height: 0;
-            }            
-            </style>
+<style>
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+        line-height: 1.5;
+        color: #24292f;
+        background-color: #ffffff;
+        margin: 16px;
+    }
+    
+    h1, h2, h3, h4, h5, h6 {
+        margin-top: 24px;
+        margin-bottom: 16px;
+        font-weight: 600;
+        line-height: 1.25;
+    }
+    
+    h1 { font-size: 2em; padding-bottom: .3em; border-bottom: 1px solid #eaecef; }
+    h2 { font-size: 1.5em; padding-bottom: .3em; border-bottom: 1px solid #eaecef; }
+    h3 { font-size: 1.25em; }
+    h4 { font-size: 1em; }
+    h5 { font-size: .875em; }
+    h6 { font-size: .85em; color: #57606a; }
+    
+    a {
+        color: #0969da;
+        text-decoration: none;
+    }
+    
+    a:hover {
+        text-decoration: underline;
+    }
+    
+    table {
+        border-spacing: 0;
+        border-collapse: collapse;
+        margin: 16px 0;
+        width: 100%;
+    }
+    
+    th, td {
+        padding: 6px 13px;
+        border: 1px solid #d0d7de;
+    }
+    
+    th {
+        font-weight: 600;
+        background-color: #f6f8fa;
+    }
+    
+    tr:nth-child(2n) {
+        background-color: #f6f8fa;
+    }
+    
+    pre {
+        padding: 16px;
+        overflow: auto;
+        font-size: 85%;
+        line-height: 1.45;
+        background-color: #f6f8fa;
+        border-radius: 6px;
+        margin: 16px 0;
+        font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
+    }
+    
+    code {
+        padding: .2em .4em;
+        margin: 0;
+        font-size: 85%;
+        background-color: rgba(175, 184, 193, 0.2);
+        border-radius: 6px;
+        font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
+    }
+    
+    pre code {
+        padding: 0;
+        margin: 0;
+        background-color: transparent;
+    }
+    
+    blockquote {
+        padding: 0 1em;
+        color: #57606a;
+        border-left: .25em solid #d0d7de;
+        margin: 16px 0;
+    }
+    
+    ul, ol {
+        padding-left: 2em;
+        margin: 16px 0;
+    }
+    
+    img {
+        max-width: 100%;
+        height: auto;
+        border-style: none;
+        margin: 16px 0;
+    }
+    
+    hr {
+        height: .25em;
+        padding: 0;
+        margin: 24px 0;
+        background-color: #d0d7de;
+        border: 0;
+    }
+    
+    input[type="checkbox"] {
+        margin: 0 .2em .25em -1.4em;
+    }
+    
+    del {
+        color: #cf222e;
+    }
+    
+    ins {
+        color: #116329;
+        text-decoration: none;
+        background-color: #dafbe1;
+    }
+    
+    mark {
+        background-color: #fff8c5;
+        color: #24292f;
+    }
+    
+    .alert {
+        padding: 16px;
+        margin: 16px 0;
+        border-radius: 6px;
+        border: 1px solid;
+    }
+    
+    .alert-info {
+        color: #0969da;
+        background-color: #ddf4ff;
+        border-color: #54aeff;
+    }
+    
+    .alert-warning {
+        color: #9a6700;
+        background-color: #fff8c5;
+        border-color: #f3c666;
+    }
+    
+    .alert-danger {
+        color: #cf222e;
+        background-color: #ffebe9;
+        border-color: #ff8182;
+    }
+    
+    .alert-success {
+        color: #116329;
+        background-color: #dafbe1;
+        border-color: #4ac26b;
+    }
+</style>
         """
 
         code_highlight = """<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.3.1/styles/default.min.css">

@@ -67,14 +67,14 @@ To use TUI, you can use the following control keys:
 
     @staticmethod
     async def on_group_message(ws, message):
-        api = onebot_package['api'].OneBotAPI(plugin_context.echo_pool)
+        api = onebot_package['api'].OneBotAPI(ws, plugin_context.echo_pool)
         async def timeout_callback():
             pass
         @plugin_context.timeout(5, timeout_callback=timeout_callback)
         async def handler():
             encoded_message = await message_codec_package['codec'].encode_message_to_CQ(message["message"])
             if encoded_message.strip() == "#help":
-                await api.send_group_message(ws, message["group_id"], message=bot_help.strip())
+                await api.send_group_message(message["group_id"], message=bot_help.strip())
             
         await handler()
 

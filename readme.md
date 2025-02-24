@@ -130,7 +130,7 @@ class Plugin: # 插件类（必须）
 
     @staticmethod
     async def on_group_message(ws, message): # 群聊消息处理
-        api = onebot_package['api'].OneBotAPI(plugin_context.echo_pool) # 获取OneBot API实例
+        api = onebot_package['api'].OneBotAPI(ws, plugin_context.echo_pool) # 获取OneBot API实例
         async def timeout_callback(): # 超时回调
             pass
 
@@ -138,7 +138,7 @@ class Plugin: # 插件类（必须）
         async def handler(): # 消息处理
             encoded_message = await message_codec_package['codec'].encode_message_to_CQ(message["message"]) # 编码消息到CQ码
             if "test" in encoded_message:
-                await api.send_group_message(ws, message["group_id"], message=encoded_message) # 发送群消息
+                await api.send_group_message(message["group_id"], message=encoded_message) # 发送群消息
             
         await handler() # 调用消息处理
 
