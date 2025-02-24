@@ -55,8 +55,8 @@ class OneBotAPI:
             self.echo_pool.echo_counter += 1
             self_echo = str(self.echo_pool.echo_counter)
             json_data["echo"] = self_echo
-            await ws.send(json.dumps(json_data))
-            return await ws.recv()
+            await self.ws.send(json.dumps(json_data))
+            return await self.ws.recv()
         response = await self._make_request(json_data)
         if "data" in response and response["data"] is not None:
             log_func('INFO', 'OneBot', "Successfully got bot group list")
