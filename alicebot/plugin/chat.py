@@ -65,6 +65,7 @@ context_temp_path.mkdir(parents=True, exist_ok=True)
 context_temp_file = context_temp_path / "context_temp.fjson"
 
 profile_path = pathlib.Path(__file__).parent / "profiles"
+profile_path.mkdir(parents=True, exist_ok=True)
 
 def get_default_system_instruction():
     return template.COT_template(
@@ -162,10 +163,13 @@ class ContextManager:
                 for k, v in context["private_context"].items()
             }
 
-    async def get_profile(self, group_id, user_id):
-        group_profile_file = profile_path / f"group_{group_id}.json"
+    async def get_profile(self, user_id):
+        group_profile_file = profile_path / f"user_{user_id}_profile.json"
         if not group_profile_file.exists():
-            return None
+            with open(group_profile_file, "w", encoding="utf-8") as f:
+                f.write(fjson.encode({
+                    
+                }))
         try:
             with open(group_profile_file, "r", encoding="utf-8") as f:
                 profiles = fjson.decode(f.read())
@@ -184,7 +188,6 @@ class ContextManager:
 
     async def build_context(
         self,
-        ws,
         api,
         context,
         user_id,
@@ -198,7 +201,40 @@ class ContextManager:
         async def build_header(user_id, user_message_id, user_sex, user_name, current = False):
             return "# Current User(Talking to the assistant):" if current else "# User:" + f'`[CQ:at,qq={user_id}]`\n## msgid:`[CQ:reply,id={user_message_id}]`\n## Time:{time.asctime()}\n## User Sex:{user_sex}\n## User Name:"{user_name}"\n## User Request:\n'
 
-        profile = await self.get_profile(group_id, user_id)
+        profile = await self.get_profile(user_id)
+
+        async def get_autosaves_file_informations():
+            # 获取文件信息（文件名，大小，修改时间，创建时间）
+            files = os.listdir(profile_path)
+            result = []
+            for file in files:
+                file_path = profile_path / file
+                file_size = os.path.getsize(file_path)
+                file_modify_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(os.path.getmtime(file_path)))
+                file_create_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(os.path.getctime(file_path)))
+                result.append({
+                    "filename": file,
+                    "size": file_size,
+                    "modify_time": file_modify_time,
+                    "create_time": file_create_time
+                })
+            return result
+
+
+
+        autosaves = await get_autosaves_file_informations()
+        autosave_str = "# My files saved in the past:\n"
+        autosave_str += "filename | modify time\n --- | --- \n"
+        for autosave in autosaves:
+            autosave_str += f"{autosave['filename']} | {autosave['modify_time']}\n"
+
+        _context.insert(
+            0,
+            {
+                "role": "assistant",
+                "content": autosave_str,
+            }
+        )
 
         if group_id:
             try:
@@ -318,11 +354,19 @@ def get_typeset_handler(api, browser, template):
 
     async def handle_wolfram(x: dict, markdown: bool, **kwargs) -> str:
         cal = x["script"]
-        result = await document_renderer_package['renderer'].wolfram_alpha.wolfram_alpha_compute(cal, image_only=True)
+        result = await document_renderer_package[
+            "renderer"
+        ].wolfram_alpha.wolfram_alpha_compute(cal, image_only=True)
 
         if markdown:
-            return "\n" + await document_renderer_package['renderer'].format_to_HTML(result) + "\n"
-        formatted = "\n" + await document_renderer_package['renderer'].format_to_CQ(result) + "\n"
+            return "\n" + await document_renderer_package['renderer'].wolfram_alpha.format_to_HTML(result) + "\n"
+        formatted = (
+            "\n"
+            + await document_renderer_package["renderer"].wolfram_alpha.format_to_CQ(
+                result
+            )
+            + "\n"
+        )
         return formatted if formatted is not None else "Failed to calculate"
 
     async def handle_markdown_render(
@@ -582,7 +626,6 @@ Powered by ✨Gemini-Flash-2.0
                 )
 
                 ai_context, real_request = await Plugin.context_manager.build_context(
-                    ws,
                     api,
                     group_context["context"].get_message(),
                     message["user_id"],
