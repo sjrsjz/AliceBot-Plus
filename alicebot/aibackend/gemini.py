@@ -106,6 +106,13 @@ class FinishReason(Enum):
     SAFETY = 3  # 安全过滤
 
 
+_safety_settings = {
+    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+}
+
 async def chat_gemini_direct(messages, system_instruction):
     messages = [
         {
@@ -124,25 +131,12 @@ async def chat_gemini_direct(messages, system_instruction):
     )
     response = await model.generate_content_async(
         gemini_mseesages,
-        safety_settings={
-            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-        },
+        safety_settings=_safety_settings,
     )
 
     _assert_safety(response)
 
     return response.text
-
-
-_safety_settings = {
-    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-}
 
 
 async def chat_gemini(
@@ -196,12 +190,7 @@ async def chat_gemini(
         try:
             response = await model.generate_content_async(
                 new_message,
-                safety_settings={
-                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-                },
+                safety_settings=_safety_settings,
                 generation_config=generation_config,
             )
             break
@@ -258,18 +247,25 @@ async def chat_gemini_tool_call(
         },
         generation_config=generation_config,
     )
-    response = await model.generate_content_async(gemini_messages, _safety_settings)
+    response = await model.generate_content_async(
+        gemini_messages, safety_settings=_safety_settings
+    )
     function_calls = []
-    for part in response.parts:
-        if fn := part.function_call:
-            function_calls.append(fn)
+
+    for part in response.candidates[0].content.parts:
+        if hasattr(part, "function_call") and part.function_call:
+            function_calls.append(part.function_call)
+
     log_func("DEBUG", "Gemini", f"Function calls: {function_calls}")
-    if function_calls != [] and response.candidates[0].content.parts != []:
-        return response.text, function_calls
+
+    if function_calls:
+        return response.candidates[0].content.parts, function_calls
 
     _assert_safety(response)
 
     return response.text, None
+
+
 
 
 def _assert_safety(response):
@@ -293,7 +289,8 @@ async def chat_gemini_with_tools(
         messages_original, tools, system_instruction, fallback_1_5
     )
 
-    if tool_calls:
+
+    if tool_calls and "skip_tool_call" not in tool_calls:
         tool_result = {
             "response": model_response,
             "result": {},
@@ -309,6 +306,11 @@ async def chat_gemini_with_tools(
         model_response = await chat_gemini(
             messages_original, system_instruction, fallback_1_5, tool_result
         )
+    if tool_calls and "skip_tool_call" in tool_calls:
+        model_response = await chat_gemini(
+            messages_original, system_instruction, fallback_1_5
+        )
+
     return model_response
 
 

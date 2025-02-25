@@ -29,9 +29,7 @@ aibackend_package = moduleloader.ModuleLoader(
 aibackend_package.load_module(
     "gemini", hot_reload=True, log_func=log_func
 )  # AI Backend
-aibackend_package.load_module(
-    "tts", hot_reload=True, log_func=log_func
-)  # AI Backend
+aibackend_package.load_module("tts", hot_reload=True, log_func=log_func)  # AI Backend
 
 
 document_renderer_package = moduleloader.ModuleLoader(
@@ -67,11 +65,16 @@ context_temp_file = context_temp_path / "context_temp.fjson"
 profile_path = pathlib.Path(__file__).parent / "profiles"
 profile_path.mkdir(parents=True, exist_ok=True)
 
+# 导入该文件目录下的util/online_py_executor.py
+from plugin.util import online_py_executor
+
+
 def get_default_system_instruction():
     return template.COT_template(
         example_typeset_package["QQBot"].typesets,
         example_prompt_package["Alice"].character,
     )
+
 
 class ContextManager:
     def __init__(self):
@@ -81,12 +84,8 @@ class ContextManager:
     def get_group_context(self, group_id):
         if str(group_id) not in self.group_context:
             self.group_context[str(group_id)] = {
-                "context": message_codec_package["context"].ContextManager(
-                    context = []
-                ),
-                "stream_context": message_codec_package[
-                    "context"
-                ].StreamContextManager(
+                "context": message_codec_package["context"].ContextManager(context=[]),
+                "stream_context": message_codec_package["context"].StreamContextManager(
                     context=[],
                     max_length=50,
                 ),
@@ -129,7 +128,12 @@ class ContextManager:
             }
             f.write(
                 fjson.encode(
-                    {"group_context": group_context, "private_context": private_context}, multi_line=True, indent=4
+                    {
+                        "group_context": group_context,
+                        "private_context": private_context,
+                    },
+                    multi_line=True,
+                    indent=4,
                 )
             )
 
@@ -167,9 +171,7 @@ class ContextManager:
         group_profile_file = profile_path / f"user_{user_id}_profile.json"
         if not group_profile_file.exists():
             with open(group_profile_file, "w", encoding="utf-8") as f:
-                f.write(fjson.encode({
-                    
-                }))
+                f.write(fjson.encode({}))
         try:
             with open(group_profile_file, "r", encoding="utf-8") as f:
                 profiles = fjson.decode(f.read())
@@ -198,8 +200,15 @@ class ContextManager:
     ):
         _context = context.copy()
 
-        async def build_header(user_id, user_message_id, user_sex, user_name, current = False):
-            return "# Current User(Talking to the assistant):" if current else "# User:" + f'`[CQ:at,qq={user_id}]`\n## msgid:`[CQ:reply,id={user_message_id}]`\n## Time:{time.asctime()}\n## User Sex:{user_sex}\n## User Name:"{user_name}"\n## User Request:\n'
+        async def build_header(
+            user_id, user_message_id, user_sex, user_name, current=False
+        ):
+            return (
+                "# Current User(Talking to the assistant):"
+                if current
+                else "# User:"
+                + f'`[CQ:at,qq={user_id}]`\n## msgid:`[CQ:reply,id={user_message_id}]`\n## Time:{time.asctime()}\n## User Sex:{user_sex}\n## User Name:"{user_name}"\n## User Request:\n'
+            )
 
         profile = await self.get_profile(user_id)
 
@@ -210,17 +219,21 @@ class ContextManager:
             for file in files:
                 file_path = profile_path / file
                 file_size = os.path.getsize(file_path)
-                file_modify_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(os.path.getmtime(file_path)))
-                file_create_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(os.path.getctime(file_path)))
-                result.append({
-                    "filename": file,
-                    "size": file_size,
-                    "modify_time": file_modify_time,
-                    "create_time": file_create_time
-                })
+                file_modify_time = time.strftime(
+                    "%Y-%m-%d %H:%M:%S", time.localtime(os.path.getmtime(file_path))
+                )
+                file_create_time = time.strftime(
+                    "%Y-%m-%d %H:%M:%S", time.localtime(os.path.getctime(file_path))
+                )
+                result.append(
+                    {
+                        "filename": file,
+                        "size": file_size,
+                        "modify_time": file_modify_time,
+                        "create_time": file_create_time,
+                    }
+                )
             return result
-
-
 
         autosaves = await get_autosaves_file_informations()
         autosave_str = "# My files saved in the past:\n"
@@ -233,7 +246,7 @@ class ContextManager:
             {
                 "role": "assistant",
                 "content": autosave_str,
-            }
+            },
         )
 
         if group_id:
@@ -303,7 +316,9 @@ class ContextManager:
                     "content": "# Current User Profile:"
                     + str(profile)
                     + "\n"
-                    + await build_header(user_id, user_message_id, user_sex, user_name, True)
+                    + await build_header(
+                        user_id, user_message_id, user_sex, user_name, True
+                    )
                     + user_request,
                 }
             )
@@ -318,7 +333,9 @@ class ContextManager:
                     "content": "# Current User Profile:"
                     + str(profile)
                     + "\n"
-                    + await build_header(user_id, user_message_id, "unknown", "unknown", True)
+                    + await build_header(
+                        user_id, user_message_id, "unknown", "unknown", True
+                    )
                     + user_request,
                 }
             )
@@ -327,9 +344,7 @@ class ContextManager:
 
 
 def get_typeset_handler(api, browser, template):
-    async def handle_shut_up(
-        x: dict, group_id: int, **kwargs
-    ) -> tuple[str, str]:
+    async def handle_shut_up(x: dict, group_id: int, **kwargs) -> tuple[str, str]:
         user = x["user_id"]
         time = x["minutes"]
         time = 10 if time > 10 else (time if time > 0 else 1)
@@ -348,7 +363,7 @@ def get_typeset_handler(api, browser, template):
         text = x["text"]
         emotion = x.get("emotion", "")
         log_func("INFO", entity_name, f"Text to speech: {text}")
-        result = await aibackend_package['tts'].text_to_speech_cosyvoice(text, emotion)
+        result = await aibackend_package["tts"].text_to_speech_cosyvoice(text, emotion)
         result = base64.b64encode(result).decode()
         return f"[CQ:record,file=base64://{result}]"
 
@@ -359,7 +374,13 @@ def get_typeset_handler(api, browser, template):
         ].wolfram_alpha.wolfram_alpha_compute(cal, image_only=True)
 
         if markdown:
-            return "\n" + await document_renderer_package['renderer'].wolfram_alpha.format_to_HTML(result) + "\n"
+            return (
+                "\n"
+                + await document_renderer_package[
+                    "renderer"
+                ].wolfram_alpha.format_to_HTML(result)
+                + "\n"
+            )
         formatted = (
             "\n"
             + await document_renderer_package["renderer"].wolfram_alpha.format_to_CQ(
@@ -370,14 +391,14 @@ def get_typeset_handler(api, browser, template):
         return formatted if formatted is not None else "Failed to calculate"
 
     async def handle_markdown_render(
-        x: dict, _FUNCTION_HANDLERS = None, markdown = False, **kwargs
+        x: dict, _FUNCTION_HANDLERS=None, markdown=False, **kwargs
     ) -> str:
         try:
             markdown_str = x["content"]
             markdown_str = await template.process_chatbot_typeset(
                 markdown_str,
                 FUNCTION_HANDLERS=_FUNCTION_HANDLERS,
-                markdown = True,
+                markdown=True,
                 _FUNCTION_HANDLERS=_FUNCTION_HANDLERS,
                 **kwargs,
             )
@@ -386,7 +407,9 @@ def get_typeset_handler(api, browser, template):
             )(markdown_str)
             if result is None:
                 return "Failed to render Markdown"
-            return f"[CQ:image,file=base64://{base64.b64encode(result).decode()},id=40000]"
+            return (
+                f"[CQ:image,file=base64://{base64.b64encode(result).decode()},id=40000]"
+            )
         except Exception as e:
             log_func("ERROR", entity_name, f"Failed to render markdown: {e}")
             return markdown_str
@@ -398,6 +421,193 @@ def get_typeset_handler(api, browser, template):
         "text_to_speech": handle_tts,
         "display_wolframalpha": handle_wolfram,
     }
+
+
+def get_available_tools():
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "search_on_web",
+                "description": "Perform a web search only if you do not know the information (excluding mathematical queries, use 'calculate' instead). Use this function sparingly, **no more than 3 times** because it is **expensive**.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "The content to search on the web if you do not know the answer.",
+                        },
+                        "search_engine": {
+                            "type": "string",
+                            "description": "The search engine to use, e.g., Google.",
+                        },
+                    },
+                    "required": ["query", "search_engine"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_webpage_from_url",
+                "description": "open url in browser and retrieve the content of the specified webpage in Markdown format directly",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "webpage": {
+                            "type": "string",
+                            "description": "The URL which you want to open in the browser",
+                        }
+                    },
+                    "required": ["webpage"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "compute_mathematical_expression_with_wolfram_alpha",
+                "description": "Compute the mathematical expression using Wolfram Alpha. Useful for complex calculations.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "expression": {
+                            "type": "string",
+                            "description": "The mathematical expression to compute, e.g., 'integrate x^2'.",
+                        }
+                    },
+                    "required": ["expression"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "python_execute",
+                "description": "Execute Python code in sandboxed environment. Not able to access the network and local files.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "code": {
+                            "type": "string",
+                            "description": "The Python code to execute. Cannot access the network and local files.",
+                        }
+                    },
+                    "required": ["code"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "require_render_format",
+                "description": "Determine whether to render Markdown or HTML or image in the conversation",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "render_format": {
+                            "type": "string",
+                            "enum": [
+                                "Markdown",
+                                "HTML",
+                                "Image",
+                                "LaTeX",
+                                "Write to file",
+                                "Typst document",
+                            ],
+                            "description": "Determine whether to render Markdown or HTML or image or write something to local files in the conversation",
+                        }
+                    },
+                    "required": ["render_format"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "skip_tool_call",
+                "description": "Skip using tools in the conversation, only use this function if you think other tools like search_on_web are not needed",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "skip": {
+                            "type": "boolean",
+                            "description": "Whether to skip using tools in the conversation",
+                        }
+                    },
+                    "required": ["skip"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "read_from_file",
+                "description": "Read something from files what you have written before",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "filenames": {
+                            "type": "string",
+                            "description": "The name of the file to read from, separate multiple files with |",
+                        }
+                    },
+                    "required": ["filenames"],
+                },
+            },
+        },
+    ]
+
+
+async def handle_tools(tool_name, args):
+    log_func("INFO", entity_name, f"Tool: {tool_name} with args: {args}")
+    if tool_name == "search_on_web":
+        return await document_renderer_package["renderer"].web_search(
+            plugin_context.bot_entity.browser, args["query"], 20, "Bing"
+        )
+    elif tool_name == "get_webpage_from_url":
+        return await document_renderer_package["renderer"].get_webpage(
+            plugin_context.bot_entity.browser,
+            args["webpage"],
+            only_text=True,
+            max_token=4096,
+        )
+    elif tool_name == "python_execute":
+        return await online_py_executor.execute_python_code(args["code"])
+    elif tool_name == "compute_mathematical_expression_with_wolfram_alpha":
+        return await document_renderer_package[
+            "renderer"
+        ].wolfram_alpha.wolfram_alpha_compute_without_image(args["expression"])
+    elif tool_name == "require_render_format":
+        if args["render_format"] == "Markdown":
+            return "[System]Markdown is required in the conversation, use `tool_code` to render the Markdown content"
+        elif args["render_format"] == "HTML":
+            return "[System]HTML is required in the conversation, use `tool_code` to warp the HTML content to render the HTML content"
+        elif args["render_format"] == "Image":
+            return "[System]Image is required in the conversation"
+        elif args["render_format"] == "LaTeX":
+            return "[System]LaTeX is required in the conversation, use $...$ to warp the mathematical expression"
+        elif args["render_format"] == "Write to file":
+            return "[System]Write to file is required in the conversation, use `tool_code` to write content to file"
+        elif args["render_format"] == "Typst document":
+            return "[System]Typst document is required in the conversation, use `tool_code` to warp the Typst document content. Remember the Typst document is only available in the `tool_code` block"
+        return "[System]" + args["render_format"] + " is required in the conversation"
+    elif tool_name == "generate_plan_of_what_to_do":
+        return "[System][Plan What to Do Next] " + args["plan"]
+    elif tool_name == "skip_tool_call":
+        return "[System]Skipped tool call"
+    elif tool_name == "read_from_file":
+        files = args["filenames"].split("|")
+        result_dict = {}
+        for file in files:
+            try:
+                with open(profile_path / file, "r", encoding="utf-8") as f:
+                    result_dict[file] = f.read()
+            except Exception as e:
+                result_dict[file] = f"[System]Failed to read file '{file}': {e}"
+        return result_dict
+    else:
+        return "Unknown or Invalid Tool: " + tool_name + " with args: " + str(args)
 
 
 class Plugin:
@@ -494,10 +704,10 @@ Powered by ✨Gemini-Flash-2.0
     async def process_sudo_command(message, group_context, message_sender_func):
         sender = message["sender"]
         command = await message_codec_package[
-                "codec"
-            ].encode_message_to_CQ_without_At_self_and_Image_tag(
-                message["message"], message["self_id"]
-            )
+            "codec"
+        ].encode_message_to_CQ_without_At_self_and_Image_tag(
+            message["message"], message["self_id"]
+        )
 
         command = command.strip()
         if not command.startswith(plugin_context.bot_entity.sudo_command_trigger):
@@ -514,7 +724,9 @@ Powered by ✨Gemini-Flash-2.0
                 "is not in the admin list.",
             )
             raise plugin_context.SkipFollow
-        command = command.replace(plugin_context.bot_entity.sudo_command_trigger, "", 1).strip()
+        command = command.replace(
+            plugin_context.bot_entity.sudo_command_trigger, "", 1
+        ).strip()
         log_func("INFO", "Bot", "Received sudo command:", command)
 
         try:
@@ -528,7 +740,9 @@ Powered by ✨Gemini-Flash-2.0
                 group_context["ai_params"]["trigger"] = command_json["set_trigger"]
                 await message_sender_func("Set trigger successfully.")
             if "set_instruction" in command_json:
-                group_context["ai_params"]["system_instruction"] = command_json["set_instruction"][0]
+                group_context["ai_params"]["system_instruction"] = command_json[
+                    "set_instruction"
+                ][0]
                 await message_sender_func("Set instruction successfully.")
         except Exception as e:
             log_func("ERROR", "Bot", "Failed to execute command:", e)
@@ -539,10 +753,10 @@ Powered by ✨Gemini-Flash-2.0
     @staticmethod
     async def process_context_command(message, message_sender_func, context):
         command = await message_codec_package[
-                "codec"
-            ].encode_message_to_CQ_without_At_self_and_Image_tag(
-                message["message"], message["self_id"]
-            )
+            "codec"
+        ].encode_message_to_CQ_without_At_self_and_Image_tag(
+            message["message"], message["self_id"]
+        )
 
         command = command.strip()
         trigger = "#context "
@@ -566,9 +780,8 @@ Powered by ✨Gemini-Flash-2.0
                 Plugin.context_manager.read_from_temporary_file()
                 await message_sender_func("Load context successfully.")
             if "clear" in command_json:
-                context['context'].clear()
+                context["context"].clear()
                 await message_sender_func("Clear context successfully.")
-                
 
         except Exception as e:
             log_func("ERROR", "Bot", "Failed to execute command:", e)
@@ -576,15 +789,12 @@ Powered by ✨Gemini-Flash-2.0
             raise Exception("#sudo command is invalid: " + command)
         raise plugin_context.SkipFollow
 
-
     @staticmethod
     async def on_group_message(ws, message):
         api = onebot_package["api"].OneBotAPI(ws, plugin_context.echo_pool)
 
         async def timeout_callback():
-            await api.send_group_message(
-                message["group_id"], "AI Chat Plugin Timeout!"
-            )
+            await api.send_group_message(message["group_id"], "AI Chat Plugin Timeout!")
 
         @plugin_context.timeout(600, timeout_callback=timeout_callback)
         async def handler():
@@ -610,7 +820,9 @@ Powered by ✨Gemini-Flash-2.0
                         return True
                 return False
 
-            if Plugin._test_if_being_at(message["message"], message["self_id"]) or check_trigger(message_str):
+            if Plugin._test_if_being_at(
+                message["message"], message["self_id"]
+            ) or check_trigger(message_str):
                 log_func(
                     "INFO",
                     entity_name,
@@ -635,8 +847,8 @@ Powered by ✨Gemini-Flash-2.0
                     group_id,
                 )
 
-                ai_response = await aibackend_package["gemini"].chat_gemini(
-                    ai_context, group_context["ai_params"]["system_instruction"]
+                ai_response = await aibackend_package["gemini"].chat_gemini_with_tools(
+                    ai_context, get_available_tools(), handle_tools, group_context["ai_params"]["system_instruction"]
                 )
 
                 template = prompt_package["template"]
@@ -658,7 +870,6 @@ Powered by ✨Gemini-Flash-2.0
                         }
                     )
 
-
                     log_func(
                         "INFO",
                         entity_name,
@@ -668,15 +879,15 @@ Powered by ✨Gemini-Flash-2.0
                     extracted_response = template.extract_response(ai_response)
 
                     try:
-                        FUNCTION_HANDLERS=get_typeset_handler(
-                                api, plugin_context.bot_entity.browser, template
-                            )
+                        FUNCTION_HANDLERS = get_typeset_handler(
+                            api, plugin_context.bot_entity.browser, template
+                        )
                         processed_response = await template.process_chatbot_typeset(
                             extracted_response,
                             FUNCTION_HANDLERS,
                             markdown=False,
                             group_id=group_id,
-                            _FUNCTION_HANDLERS = FUNCTION_HANDLERS
+                            _FUNCTION_HANDLERS=FUNCTION_HANDLERS,
                         )
                     except Exception as e:
                         log_func(
@@ -702,8 +913,10 @@ Powered by ✨Gemini-Flash-2.0
 
         try:
             await handler()
-        except plugin_context.SkipFollow: raise plugin_context.SkipFollow
-        except plugin_context.Skip: raise plugin_context.Skip
+        except plugin_context.SkipFollow:
+            raise plugin_context.SkipFollow
+        except plugin_context.Skip:
+            raise plugin_context.Skip
         except Exception as e:
             log_func(
                 "ERROR",

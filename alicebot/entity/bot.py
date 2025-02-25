@@ -191,7 +191,18 @@ class Bot:
         self, ws: websockets.WebSocketClientProtocol, message
     ):
         # 遍历所有插件
+        sorted_plugin_names = []
         for plugin_name, plugin in self.plugin_package.get_all_modules().items():
+            # 根据优先级排序
+            for i in range(len(sorted_plugin_names)):
+                if self.plugin_meta.get_plugin_priority(plugin_name) > self.plugin_meta.get_plugin_priority(sorted_plugin_names[i]):
+                    sorted_plugin_names.insert(i, plugin_name)
+                    break
+            else:
+                sorted_plugin_names.append(plugin_name)
+        # 倒序
+        sorted_plugin_names.reverse()
+        for plugin_name in sorted_plugin_names:
             if (
                 self.plugin_meta.get_plugin_status(plugin_name)
                 == Bot.PluginStatus.INACTIVE
@@ -204,7 +215,9 @@ class Bot:
                 if not message["sender"]["user_id"] in self.admins:
                     continue
             try:
-                await plugin.Plugin.on_group_message(ws, message)
+                await self.plugin_package.get_all_modules()[plugin_name].Plugin.on_group_message(
+                    ws, message
+                )
             except Bot.Skip:
                 continue
             except Bot.SkipFollow:
@@ -274,6 +287,11 @@ class Bot:
                     "active", Bot.PluginStatus.INACTIVE
                 )
 
+            def get_plugin_priority(self, plugin_name, meta_path=meta_path):
+                return self.meta.get(plugin_name, {}).get(
+                    "priority", 0
+                )
+
             def save(self, meta_path=meta_path):
                 with open(meta_path, "w", encoding="utf-8") as f:
                     f.write(self.json(indent=4, multi_line=True))
@@ -304,6 +322,7 @@ class Bot:
                 self.plugin_meta.meta[plugin_name] = {
                     "active": Bot.PluginStatus.INACTIVE,
                     "permission": Bot.PluginPermission.USER,
+                    "priority": 0,
                 }
         self.plugin_meta.save()
 

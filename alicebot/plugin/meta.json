@@ -2,11 +2,23 @@
     "meta": {
         "help": {
             "active": 1,
-            "permission": 0
+            "permission": 0,
+            "priority": 2
         },
         "chat": {
             "active": 1,
-            "permission": 0
+            "permission": 0,
+            "priority": 2
+        },
+        "anti_withdraw": {
+            "active": 1,
+            "permission": 0,
+            "priority": 2
+        },
+        "npucraft": {
+            "active": 1,
+            "permission": 0,
+            "priority": 0
         }
     }
 }
