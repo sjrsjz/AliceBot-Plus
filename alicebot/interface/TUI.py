@@ -8,7 +8,8 @@ import threading
 import time
 import wcwidth as wcw
 import readchar
-
+import sys
+import os
 
 class RichTUI:
 
@@ -132,6 +133,8 @@ class RichTUI:
             self.server_close_event()
 
     def key_handler(self):
+        if not sys.stdout.isatty() or os.environ.get('ALICEBOT_NO_TUI'):
+            return
         def on_press(key):
             with self.buffer_handler_lock:
                 if key == readchar.key.UP or key == 'w':  # 向上滚动
