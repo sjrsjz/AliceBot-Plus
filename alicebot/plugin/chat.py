@@ -604,7 +604,7 @@ async def handle_tools(tool_name, args):
 class Plugin:
     context_manager = None
     lock = Lock()
-    rate_limiter = plugin_context.RateLimiter(300, 300)
+    rate_limiter = plugin_context.RateLimiter(300, 900)
 
     @staticmethod
     def create():
