@@ -81,7 +81,7 @@ class RichTUI:
             with self.buffer_handler_lock:
                 self.handle_print_buffer()
             time.sleep(0.1)
-        print("[Waring]Buffer handler closed")
+        print("[Warning]Buffer handler closed")
 
     def run(self):
         threading.Thread(target=self.key_handler).start()
@@ -124,7 +124,7 @@ class RichTUI:
                 time.sleep(0.1)  # 降低CPU占用
             if self.close_signal:
                 # 清空TUI
-                live.update(Text("[Waring]TUI closed", style="red"))
+                live.update(Text("[Warning]TUI closed", style="red"))
                 live.stop()
         buffer_thread.join()
         self.cleanup()
@@ -152,7 +152,7 @@ class RichTUI:
                 on_press(key)
             except KeyboardInterrupt:
                 self.close_signal = True
-                print("[Waring]Close signal received")
+                print("[Warning]Close signal received")
                 break
 
     def print(self, *args, **kwargs):
