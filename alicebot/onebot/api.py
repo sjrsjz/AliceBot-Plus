@@ -102,7 +102,7 @@ class OneBotAPI:
         if "data" in response and response["data"] is not None and "message_id" in response["data"]:
             log_func('INFO', 'OneBot', "Successfully sent group message")
             return response["data"]["message_id"]
-        log_func('ERROR', 'OneBot', "Failed to send group message")
+        log_func('ERROR', 'OneBot', f"Failed to send group message, response: {response}")
         return None
 
     async def send_group_message_separate_audio(self, group_id, message, auto_escape=False):

@@ -22,8 +22,9 @@
 - [x] 网页搜索、读取解析
 - [x] 插件系统
 - [x] 上下文管理器
-- [x] AI 模型支持 (富文本输出和函数调用仍未完成)
+- [x] AI 模型支持，支持自动搜索网页和语音生成等，默认提示词模板支持自动建立用户档案
 - [x] 复杂指令解析
+- [x] 简易 WebUI
 - [ ] 私聊消息处理 
 
 ## 🚀快速开始
@@ -49,20 +50,50 @@ python -m alicebot
     "meta": {
         "test": { // 插件名（文件名）
             "active": 1, // 是否启用
-            "permission": 0 // 权限等级, 0 为所有人可用, 1 为Bot管理员可用
+            "permission": 0, // 权限等级, 0 为所有人可用, 1 为Bot管理员可用
+            "priority": 0 // 插件优先级, 越高越先执行，默认为 0
         },
         "help": {
             "active": 1,
-            "permission": 0
+            "permission": 0,
+            "priority": 0
         }
     }
 }
 ```
-`config/config.json` 是配置文件，用于配置机器人的基本信息。
+`config/bot_config.json` 是配置文件，用于配置机器人的基本信息。
 
 ```json
 {
-    "admins": [] // 管理员QQ号
+    "admins": [], // 管理员QQ号
+    "browser_path": "/usr/bin/chromium" // 无头浏览器路径
+}
+```
+
+`config/protocol.json` 是协议/网络配置文件，用于配置机器人的协议信息。
+
+```json
+{
+    "ws_url": "ws://127.0.0.1:8080", // OneBotAPI地址
+    "webui_port": 8081 // WebUI端口，监听 0.0.0.0
+}
+
+`interface/webui-config/users.json` 是WebUI的用户配置文件，用于配置WebUI的用户信息。
+
+```json
+{
+    "SHA256 hashed username": "SHA256 hashed password",
+}
+```
+
+`aibackend/keys/apikey.json` 是AI后端的API Key配置文件，用于配置AI后端的API Key信息。
+
+```json
+{
+    "gemini": [], // Gemini API Key，从谷歌AI平台获取
+    "gemini_index": 0,
+    "tts": [], // TTS API Key，从硅基流动平台获取
+    "tts_index": 0
 }
 ```
 

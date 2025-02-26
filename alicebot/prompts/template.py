@@ -47,13 +47,16 @@ You must follow a structured reasoning process to ensure accurate and logical re
 ### Guidelines:
 You should use five headers to guide the reasoning process: `understand`, `think`, `reflect`, and `respond`. Each header serves a specific purpose in the reasoning process.
 + **<|start_header|>understand<|end_header|>**(English): Comprehensively understand the user's question or context. Ensure you fully grasp the problem and its context.
+    + Use 'PlantUML' to descript your understand.
     + List important points and considerations.
     + List steps to solve the problem or answer the question.
     + Set your emotional tone and personality.
     + Identify users who are related to the request.
+    + **List all the common sense information that is relevant to the problem** to prevent ERRORs.
     + *Note*: Users' input may use homophones (a special Chinese expression in which words with the same pronunciation are used to evade content censorship).
         > To understand homophony memes, write down their pinyin and try fuzzy matching with other words (usually content blocked by censorship). For example, `香草` -> `XiangChao` -> `XiangCao` -> `想操`, '超' -> `Chao` -> `Cao` -> `操`, `鹿` -> `Lu` -> `撸`, etc.
 + **<|start_header|>think<|end_header|>**(English): Engage in deep reasoning and analysis of the problem. Always think step by step to avoid errors, especially with *numbers and multi-step calculations*.
+    + Use 'PlantUML' to descript your think.
     + You should analyze the relationship between the different user requests and the relationship between the user's request and yourself.
     + Think carefully about logic and facts, and avoid mistakes.
     + Solve the points you listed in the `understand` part.
@@ -91,18 +94,93 @@ You should use five headers to guide the reasoning process: `understand`, `think
 
 ````Full output example
 <|start_header|>understand<|end_header|>
-...(your understanding)
+@startuml
+title Understanding Phase - Number Comparison
+
+package "UNDERSTAND" {
+  [User Input] as input <<request>>
+  [Problem Identification] as identify <<judgment>>
+  [Key Points Analysis] as analysis
+  [Common Sense Bank] as knowledge
+
+  input --> identify : "Which is larger: 9.8 or 9.11?"
+  identify --> analysis : Detected:\nDecimal comparison\nDifferent digit lengths
+  analysis --> knowledge : Required rules
+}
+
+knowledge : Common Sense Database:
+knowledge : 1. Align decimals by appending zeros\n
+knowledge : 2. Compare digit-by-digit\n
+knowledge : 3. 9.8 = 9.80 (equivalent)\n
+knowledge : 4. Comparison order:\n   integer → tenths → hundredths\n
+knowledge : 5. Never compare digit counts directly
+
+note right of input
+**Homophone Alert** (虽然不适用本案例):
+If Chinese homophones detected:
+1. Convert to pinyin
+2. Fuzzy match censored terms
+3. Cross-verify context
+end note
+@enduml
+...(your understanding, in `PlantUML` language)
 <|start_header|>think<|end_header|>
-...(your thinking)
-<|start_header|>reflect<|end_header|>
-...(your reflect)
-<|start_header|>think<|end_header|>
-...(your thinking after found errors)
+@startuml
+title Thinking Phase - Step-by-Step Comparison
+
+package "THINK" {
+  [Step 1: Integer Check] as step1 <<process>>
+  [Step 2: Decimal Alignment] as step2 <<process>>
+  [Step 3: Digit Comparison] as step3 <<process>>
+  [Validation Protocol] as verify <<checklist>>
+  [Conclusion] as result
+
+  step1 --> step2 : Equal integers (9=9)
+  step2 --> step3 : 9.80 vs 9.11
+  step3 --> verify : Tenths comparison (8>1)
+  verify --> result : Verified
+}
+
+step1 : **Integer Part**\n
+        Compare left of decimal:\n
+        9 vs 9 → Equal
+
+step2 : **Decimal Normalization**\n
+        Convert 9.8 → 9.80\n
+        Now compare 9.80 vs 9.11
+
+step3 : **Digit-by-Digit Analysis**\n
+        Tenths place:\n
+        8 (80/100) vs 1 (10/100)\n
+        Clear advantage at tenths
+
+verify : **Verification Steps**:
+verify : 1. Alignment check ✓\n
+verify : 2. No skipped digits ✓\n
+verify : 3. Comparison order ✓\n
+verify : 4. No false equivalence ✓
+
+result : **Final Conclusion**:\n
+        9.8 > 9.11\n
+        (9.80 > 9.11)
+
+note left of verify
+**Error Recovery Protocol**:
+If any check fails:
+1. Roll back to Step 2
+2. Re-normalize decimals
+3. Restart comparison
+end note
+@enduml
+...(your thinking, in `PlantUML` language)
 <|start_header|>reflect<|end_header|>
 ...(your reflect)
 ...(many turns)
 <|start_header|>respond<|end_header|> (REQUIRED)
-...(your response, in **简体中文**, only this part will be visible to the user)
+(many typesetting format use `tool_code`)
+...
+(your response)
+...(in **简体中文**, only this part will be visible to the user)
 ````
 
 --- [AI Response Example End] ---
@@ -146,9 +224,10 @@ def build_typesetting_template(typeset_name:str, description: str, detail: str, 
     format_description = "    ```tool_code\n    print(default_api.%s(%s))\n    ```"
     args_example = ", ".join([f"{k}={_val_to_str(v)}" for k, v in args.items()])
     args_description = ", ".join([f"{k}:{type(v).__name__}" for k, v in args.items()])
-    detail = textwrap.indent(f"{detail}\n**Format**:\n{format_description % (typeset_name, args_description)}\n{eg % (typeset_name, args_example)}", "    ")    
+    detail = textwrap.indent(f"{detail}\n> typeset format**:\n{format_description % (typeset_name, args_description)}\n{eg % (typeset_name, args_example)}", "    ")    
     template = f"""+ use the `tool_code` to *{description}*\n{detail}"""
-    return template
+    eg2 = "```tool_code\nprint(default_api.%s(%s))```" % (typeset_name, args_example)
+    return template, eg2
 
 
 def build_typesetting_prompt(typesets: list):
@@ -156,14 +235,15 @@ def build_typesetting_prompt(typesets: list):
     typesetting_content = "--- [Typesetting Format Start] ---\n"
     typesetting_content += "+ use `[CQ:at,qq=user_qq_id]` to refer the user you mention\n    > e.g., `[CQ:at,qq=123456789]`\n\n"
 
+    typesetting_eg = ""
+
     # 添加所有typeset
     for typeset in typesets:
-        typesetting_content += build_typesetting_template(
-            typeset["name"],
-            typeset["description"],
-            typeset["detail"],
-            typeset["args"]
-        ) + "\n\n"
+        template, eg = build_typesetting_template(
+            typeset["name"], typeset["description"], typeset["detail"], typeset["args"]
+        )
+        typesetting_content += template + "\n\n"
+        typesetting_eg += eg + "\n\n"
 
     # 添加split mark说明
     typesetting_content += """+ use the `---split---` mark to separate your response into multiple messages and send them one by one
@@ -179,13 +259,11 @@ def build_typesetting_prompt(typesets: list):
 
     typesetting_content += "--- [Typesetting Format End] ---\n"
 
-    return typesetting_content
-
-def build_character_template(character_description:str, typeset_description: str):
-    return GEMINI_TEMPLATE % (typeset_description, character_description)
+    return typesetting_content, typesetting_eg
 
 def COT_template(typesettings: list, character_description: str):
-    return GEMINI_TEMPLATE % (build_typesetting_prompt(typesettings), character_description) + COT
+    template, eg = build_typesetting_prompt(typesettings)
+    return GEMINI_TEMPLATE % (template, character_description) + COT
 
 
 def extract_response(text: str) -> str | None:
@@ -246,19 +324,19 @@ async def process_chatbot_typeset(message: str, FUNCTION_HANDLERS: dict, **kwarg
     # 把消息拆分成一个数组，用type区分是否是函数调用，None表示普通文本
     message = []
     REs = regex.finditer(r"(?sm)^[ \t]*```\s*tool_code[^\n]*$(.*?)^[ \t]*```[ \t]*$", msg)
-    
+
     last_end = 0
     for match in REs:
         start = match.start()
         end = match.end()
-        
+
         # 添加函数调用前的普通文本
         if start > last_end:
             message.append({
                 "type": None,
                 "content": msg[last_end:start]
             })
-            
+
         # 添加函数调用
         func_body = match.group(1)
         log_func('INFO', 'AI', f"Processing tool code: {func_body}")
@@ -292,9 +370,9 @@ async def process_chatbot_typeset(message: str, FUNCTION_HANDLERS: dict, **kwarg
             "name": function_name,
             "args": function_args
         })
-        
+
         last_end = end
-    
+
     # 添加最后一段普通文本
     if last_end < len(msg):
         message.append({
@@ -321,6 +399,13 @@ async def process_chatbot_typeset(message: str, FUNCTION_HANDLERS: dict, **kwarg
                 final_msg += f" [{part['name']}] {part['args']} "
 
     return final_msg
+
+
+def split_response(message: str) -> list:
+    messages = message.split("---split---")
+    return [m.strip() for m in messages if m.strip()]
+
+
 def __test__():
     from alicebot.loader.moduleloader import ModuleLoader
     import pathlib

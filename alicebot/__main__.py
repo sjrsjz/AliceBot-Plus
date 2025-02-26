@@ -17,7 +17,7 @@ if project_root not in sys.path:
     sys.path.append(project_root)
 from loader import moduleloader
 
-from interface import TUI
+from interface import TUI, WebUI
 
 def default_log_func(level, entity, *args, **kwargs):
     print(f"[{level}][{entity}]", *args, **kwargs)
@@ -44,13 +44,15 @@ bot_module = bot_package.load_module("bot", log_func=log_func)
 
 @fjson.DataClass
 class ProtocolConfig:
-    def __init__(self, ws_url: str = "ws://127.0.0.1:8080"):
+    def __init__(self, ws_url: str = "ws://127.0.0.1:8080", webui_port: int = 8001):
         self.ws_url = ws_url
+        self.webui_port = webui_port
 
     def load(self, config_path: str):
         with open(config_path, 'r', encoding='utf-8') as f:
             data = self.load_json(f.read())
             self.ws_url = data.ws_url
+            self.webui_port = data.webui_port
     def save(self, config_path: str):
         with open(config_path, 'w', encoding='utf-8') as f:
             f.write(self.json(indent=4, multi_line=True))
@@ -107,7 +109,7 @@ async def process_message(ws, Bots, echo_pool, status: Status):
                 continue
 
             if message["post_type"] == "meta_event" and message["meta_event_type"] == "heartbeat":
-                log_func('INFO', 'Websocket', "Received heartbeat")
+                # log_func('INFO', 'Websocket', "Received heartbeat")
                 continue
             if message["post_type"] == "message" and message["message_type"] == "group":
                 for bot in Bots:
@@ -219,7 +221,11 @@ def init(status: Status):
             global_websocket.transport.close()
             log_func('INFO', 'System', "Websocket connection closed")
 
-    tui = TUI.RichTUI(update_status, close_server)
+    # 新建一个日志文件在 logs/time.log
+    log_file = pathlib.Path(__file__).parent / "logs" / f"{time.strftime('%Y-%m-%d_%H-%M-%S', time.localtime())}.log"
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+
+    tui = TUI.RichTUI(update_status, close_server, open(log_file, 'a', encoding='utf-8'))
 
     def update_machine_status():
         while not tui.close_signal:
@@ -242,8 +248,31 @@ global_status = Status()
 
 async def server(ws_url=protocol_config.ws_url):
     global_status.loop = asyncio.get_event_loop()
-    init(global_status)
+    tui = init(global_status)
+    async def log_provider():
+        async def get_task_info():
+            info = {}
+            info["cpu_percent"] = global_status.cpu_percent
+            info["memory_percent"] = global_status.memory_percent
+            info["running_tasks"] = []
+            current_time = time.time()
+            for task in global_status.bot_tasks:
+                tmp = {}
+                name = task["task"].get_name()
+                tmp["task_name"] = f"{name}"
+                tmp["task_start_time"] = task["start_time"]
+                tmp["task_duration"] = current_time - task["start_time"]
+                tmp["message"] = task["message"]
+                info["running_tasks"].append(tmp)
+            return info
+
+        return {"log_text": tui.get_frame_buffer, "tasks_info": get_task_info}
+    webui = WebUI.WebUI(protocol_config.webui_port, log_provider, log_func)
+
     log_func('INFO', 'System', "Booting up...")
+
+    await webui.run()
+
     echo_pool = onebot_api_module.EchoPool()
     Bots = [bot_module.Bot(echo_pool)]
     ws: Optional[websockets.WebSocketClientProtocol] = None
@@ -288,6 +317,7 @@ async def server(ws_url=protocol_config.ws_url):
     for bot in Bots:
         await bot.destroy(ws)
 
+    await webui.exit()
 
 async def cleanup():
     log_func("INFO", "System", "Cleaning up...")

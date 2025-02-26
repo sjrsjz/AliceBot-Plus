@@ -6,14 +6,13 @@ from rich.live import Live
 from rich import box
 import threading
 import time
-import builtins
 import wcwidth as wcw
 import readchar
 
 
 class RichTUI:
 
-    def __init__(self, status_bar_setter, server_close_event=None):
+    def __init__(self, status_bar_setter, server_close_event = None, log_file = None):
         self.console = Console()
         self.log_buffer = []
         self.log_index = 0
@@ -32,7 +31,7 @@ class RichTUI:
         self.status_bar_setter = status_bar_setter
         self.log_area_y = 0
 
-        self.log_file = None
+        self.log_file = log_file
         self.print_lock = threading.Lock()
         self.print_buffer = ""
         self.buffer_handler_lock = threading.Lock()
@@ -174,7 +173,7 @@ class RichTUI:
         self.print_buffer = ""
 
     def cleanup(self):
-        pass  # 不需要结束 curses
+        pass
 
     def __del__(self):
         self.cleanup()
@@ -188,32 +187,8 @@ class RichTUI:
             self.close_signal = True
             self.tui_thread.join()
 
-
-def run_TUI(bar_setter):
-    global tui
-    tui = RichTUI(bar_setter)
-    tui.max_y, tui.max_x = tui.console.size
-    tui.run()
-    tui.cleanup()
-
-
-def stop_TUI():
-    global tui
-    if tui is not None:
-        tui.cleanup()
-
-
-tui_thread = None
-
-
-def run_TUI_thread(bar_setter):
-    global tui_thread
-    tui_thread = threading.Thread(target=run_TUI, args=(bar_setter,))
-    tui_thread.start()
-
-
-def stop_TUI_thread():
-    global tui_thread
-    if tui_thread is not None:
-        stop_TUI()
-        tui_thread.join()
+    def get_log_buffer(self):
+        return self.log_buffer
+    
+    def get_frame_buffer(self):
+        return self.frame_buffer

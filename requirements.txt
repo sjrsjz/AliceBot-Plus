@@ -15,9 +15,6 @@ RestrictedPython
 google-generativeai
 tiktoken
 
-# textwrap
-# base64
-
 wcwidth
 readchar
 simple-fjson

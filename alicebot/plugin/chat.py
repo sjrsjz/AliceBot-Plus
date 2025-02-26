@@ -4,6 +4,7 @@ import time
 import traceback
 import base64
 import os
+import asyncio
 from threading import Lock
 from typing import Callable, Any
 
@@ -70,10 +71,7 @@ from plugin.util import online_py_executor
 
 
 def get_default_system_instruction():
-    return template.COT_template(
-        example_typeset_package["QQBot"].typesets,
-        example_prompt_package["Alice"].character,
-    )
+    return example_prompt_package["Alice"].character
 
 
 class ContextManager:
@@ -174,12 +172,7 @@ class ContextManager:
                 f.write(fjson.encode({}))
         try:
             with open(group_profile_file, "r", encoding="utf-8") as f:
-                profiles = fjson.decode(f.read())
-                if profiles == None:
-                    return None
-                if str(user_id) in profiles:
-                    return profiles[str(user_id)]
-                return None
+                return f.read()
         except Exception as e:
             log_func(
                 "WARN",
@@ -204,9 +197,7 @@ class ContextManager:
             user_id, user_message_id, user_sex, user_name, current=False
         ):
             return (
-                "# Current User(Talking to the assistant):"
-                if current
-                else "# User:"
+                ("# Current User(Talking to the assistant):" if current else "# User:")
                 + f'`[CQ:at,qq={user_id}]`\n## msgid:`[CQ:reply,id={user_message_id}]`\n## Time:{time.asctime()}\n## User Sex:{user_sex}\n## User Name:"{user_name}"\n## User Request:\n'
             )
 
@@ -490,7 +481,7 @@ def get_available_tools():
                     "properties": {
                         "code": {
                             "type": "string",
-                            "description": "The Python code to execute. Cannot access the network and local files.",
+                            "description": "The Python code to execute. Cannot access the network and local files. Never, Never use this tool to save files, you should use the `tool_code`: `write_to_file` instead",
                         }
                     },
                     "required": ["code"],
@@ -652,7 +643,7 @@ Commands:
 - `#context --save_all`: Save all context to temporary file.
 - `#context --load_all`: Load all context from temporary file.
 - `#sudo --set_trigger trigger1 trigger2 ... `: Set trigger for AI.
-- `#sudo --set_instruction "system instruction"`: Set instruction for AI.
+- `#sudo --set_instruction "system instruction"`: Set instruction for AI. Empty to reset to default.
 """.strip()
 
     @staticmethod
@@ -740,9 +731,12 @@ Powered by ✨Gemini-Flash-2.0
                 group_context["ai_params"]["trigger"] = command_json["set_trigger"]
                 await message_sender_func("Set trigger successfully.")
             if "set_instruction" in command_json:
-                group_context["ai_params"]["system_instruction"] = command_json[
-                    "set_instruction"
-                ][0]
+                if command_json["set_instruction"] == []:
+                    group_context["ai_params"]["system_instruction"] = get_default_system_instruction()
+                else:
+                    group_context["ai_params"]["system_instruction"] = command_json[
+                        "set_instruction"
+                    ][0]
                 await message_sender_func("Set instruction successfully.")
         except Exception as e:
             log_func("ERROR", "Bot", "Failed to execute command:", e)
@@ -782,6 +776,9 @@ Powered by ✨Gemini-Flash-2.0
             if "clear" in command_json:
                 context["context"].clear()
                 await message_sender_func("Clear context successfully.")
+            if "withdraw" in command_json:
+                context["context"].withdraw()
+                await message_sender_func("Withdraw context successfully.")
 
         except Exception as e:
             log_func("ERROR", "Bot", "Failed to execute command:", e)
@@ -847,11 +844,17 @@ Powered by ✨Gemini-Flash-2.0
                     group_id,
                 )
 
-                ai_response = await aibackend_package["gemini"].chat_gemini_with_tools(
-                    ai_context, get_available_tools(), handle_tools, group_context["ai_params"]["system_instruction"]
-                )
-
                 template = prompt_package["template"]
+
+                ai_response = await aibackend_package["gemini"].chat_gemini_with_tools(
+                    ai_context,
+                    get_available_tools(),
+                    handle_tools,
+                    template.COT_template(
+                        example_typeset_package["QQBot"].typesets,
+                        group_context["ai_params"]["system_instruction"],
+                    ),
+                )
 
                 await api.withdraw_message(message_id)
 
@@ -878,26 +881,30 @@ Powered by ✨Gemini-Flash-2.0
 
                     extracted_response = template.extract_response(ai_response)
 
-                    try:
-                        FUNCTION_HANDLERS = get_typeset_handler(
-                            api, plugin_context.bot_entity.browser, template
-                        )
-                        processed_response = await template.process_chatbot_typeset(
-                            extracted_response,
-                            FUNCTION_HANDLERS,
-                            markdown=False,
-                            group_id=group_id,
-                            _FUNCTION_HANDLERS=FUNCTION_HANDLERS,
-                        )
-                    except Exception as e:
-                        log_func(
-                            "ERROR",
-                            entity_name,
-                            f"Failed to process chatbot typeset: {traceback.format_exc()}",
-                        )
-                        processed_response = extracted_response
+                    splited_response = template.split_response(extracted_response)
 
-                    await api.send_group_message(group_id, processed_response)
+                    for response in splited_response:
+                        try:
+                            FUNCTION_HANDLERS = get_typeset_handler(
+                                api, plugin_context.bot_entity.browser, template
+                            )
+                            processed_response = await template.process_chatbot_typeset(
+                                response,
+                                FUNCTION_HANDLERS,
+                                markdown=False,
+                                group_id=group_id,
+                                _FUNCTION_HANDLERS=FUNCTION_HANDLERS,
+                            )
+                        except Exception as e:
+                            log_func(
+                                "ERROR",
+                                entity_name,
+                                f"Failed to process chatbot typeset: {traceback.format_exc()}",
+                            )
+                            processed_response = response
+
+                        await api.send_group_message(group_id, processed_response)
+                        await asyncio.sleep(5)
             else:
 
                 group_context["stream_context"].push_message(

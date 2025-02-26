@@ -41,12 +41,13 @@ typesets = [
         {
             "name": "write_to_file",
             "description": "write content to a local file",
-            "detail": """- Can be used in main content
-    - Filename should be unique without special characters/spaces
-    - Should describe content clearly and concisely
-    - Use automatically without waiting for user command
-    - Automatically overwrite existing files
-    - You should use this command to save important information and update user's profile""",
+            "detail": """This is the only way for you to access the file system:
+- Can only be used in `respond` content
+- Filename should be unique without special characters/spaces
+- Should describe content clearly and concisely
+- Use automatically without waiting for user command
+- Automatically overwrite existing files
+- You should use this command to save important information and update user's profile""",
             "args": {"filename": "summary of content or user's profile name", "content": "something"}
         },
         {

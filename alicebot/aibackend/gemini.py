@@ -225,7 +225,7 @@ async def chat_gemini_tool_call(
     gemini_messages, tools = convert_to_gemini_messages(messages, tools)
 
     generation_config = {
-        "temperature": 1.2,
+        "temperature": 0.7,
         "top_p": 0.96,
         "top_k": 40,
         "max_output_tokens": 8192,
@@ -289,8 +289,13 @@ async def chat_gemini_with_tools(
         messages_original, tools, system_instruction, fallback_1_5
     )
 
+    def check_if_skip(tool_calls):
+        for tool_call in tool_calls:
+            if tool_call.name == "skip_tool_call":
+                return True
+        return False
 
-    if tool_calls and "skip_tool_call" not in tool_calls:
+    if tool_calls and not check_if_skip(tool_calls):
         tool_result = {
             "response": model_response,
             "result": {},
@@ -306,7 +311,7 @@ async def chat_gemini_with_tools(
         model_response = await chat_gemini(
             messages_original, system_instruction, fallback_1_5, tool_result
         )
-    if tool_calls and "skip_tool_call" in tool_calls:
+    if tool_calls and check_if_skip(tool_calls):
         model_response = await chat_gemini(
             messages_original, system_instruction, fallback_1_5
         )
