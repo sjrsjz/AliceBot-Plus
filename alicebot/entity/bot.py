@@ -41,6 +41,7 @@ document_renderer = document_renderer_package.load_module(
 
 
 from util.timeout import timeout
+from util.ratelimit import ratelimit, async_ratelimit, RateLimitedError, RateLimiter
 
 
 class Bot:
@@ -215,9 +216,13 @@ class Bot:
                 if not message["sender"]["user_id"] in self.admins:
                     continue
             try:
-                await self.plugin_package.get_all_modules()[plugin_name].Plugin.on_group_message(
-                    ws, message
-                )
+                if not hasattr(
+                    self.plugin_package.get_all_modules()[plugin_name].Plugin, "on_group_message"
+                ):
+                    continue
+                await self.plugin_package.get_all_modules()[
+                    plugin_name
+                ].Plugin.on_group_message(ws, message)
             except Bot.Skip:
                 continue
             except Bot.SkipFollow:
@@ -243,6 +248,50 @@ class Bot:
             message_str,
             lambda x: api.send_group_message(message["group_id"], x),
         )
+
+    async def receive_poke_notice(
+        self, ws: websockets.WebSocketClientProtocol, message
+    ):
+        # 遍历所有插件
+        sorted_plugin_names = []
+        for plugin_name, plugin in self.plugin_package.get_all_modules().items():
+            # 根据优先级排序
+            for i in range(len(sorted_plugin_names)):
+                if self.plugin_meta.get_plugin_priority(
+                    plugin_name
+                ) > self.plugin_meta.get_plugin_priority(sorted_plugin_names[i]):
+                    sorted_plugin_names.insert(i, plugin_name)
+                    break
+            else:
+                sorted_plugin_names.append(plugin_name)
+        # 倒序
+        sorted_plugin_names.reverse()
+        for plugin_name in sorted_plugin_names:
+            if (
+                self.plugin_meta.get_plugin_status(plugin_name)
+                == Bot.PluginStatus.INACTIVE
+            ):
+                continue
+            if (
+                self.plugin_meta.get_plugin_permission(plugin_name)
+                == Bot.PluginPermission.ADMIN
+            ):
+                if not message["sender"]["user_id"] in self.admins:
+                    continue
+            try:
+                if not hasattr(
+                    self.plugin_package.get_all_modules()[plugin_name].Plugin, "on_poke"
+                ):
+                    continue
+                await self.plugin_package.get_all_modules()[
+                    plugin_name
+                ].Plugin.on_poke(ws, message)
+            except Bot.Skip:
+                continue
+            except Bot.SkipFollow:
+                return  # 跳过后续插件以及默认回复
+            except Exception as e:
+                log_func("ERROR", "Bot", "Error in plugin", plugin_name, ":", e)
 
     async def create(self, ws: websockets.WebSocketClientProtocol):
         log_func("INFO", "Bot", "Creating bot entity...")
@@ -339,6 +388,10 @@ class Bot:
                     Skip,
                     SkipFollow,
                     timeout,
+                    ratelimit,
+                    async_ratelimit,
+                    RateLimitedError,
+                    RateLimiter,
                     echo_pool,
                     onebot_package_path=onebot_package_path,
                     message_codec_package_path=message_codec_package_path,
@@ -351,6 +404,10 @@ class Bot:
                     self.Skip = Skip
                     self.SkipFollow = SkipFollow
                     self.timeout = timeout
+                    self.ratelimit = ratelimit
+                    self.async_ratelimit = async_ratelimit
+                    self.RateLimitedError = RateLimitedError
+                    self.RateLimiter = RateLimiter
                     self.echo_pool = echo_pool
                     self.onebot_package_path = onebot_package_path
                     self.message_codec_package_path = message_codec_package_path
@@ -374,6 +431,10 @@ class Bot:
                     self.Skip,
                     self.SkipFollow,
                     timeout,
+                    ratelimit,
+                    async_ratelimit,
+                    RateLimitedError,
+                    RateLimiter,
                     self.echo_pool,
                     onebot_package_path,
                     message_codec_package_path,

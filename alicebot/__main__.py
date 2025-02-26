@@ -101,54 +101,72 @@ class Status:
 
 async def process_message(ws, Bots, echo_pool, status: Status):
     while not close_event.is_set():
+        timeout_count = 0
         try:
             message = await asyncio.wait_for(ws.recv(), timeout=10.0)
             message = json.loads(message)
+            timeout_count = 0
+
             if "status" in message and "echo" in message:
                 echo_pool.echo_dict[message["echo"]] = message
                 continue
-
             if message["post_type"] == "meta_event" and message["meta_event_type"] == "heartbeat":
                 # log_func('INFO', 'Websocket', "Received heartbeat")
                 continue
+
+            async def bot_process(processor):
+                task = asyncio.create_task(processor(ws, copy.deepcopy(message)))
+                task_info = {
+                    "task": task,
+                    "bot": bot,
+                    "message": copy.deepcopy(message),
+                    "start_time": time.time(),
+                    "websocket": ws
+                }
+                status.bot_tasks.append(task_info)
+
+                def task_done_callback(task):
+                    try:
+                        # 获取任务结果，这会重新引发任何未处理的异常
+                        task.result()
+
+                        # 如果没有异常，记录成功信息
+                        for idx in range(len(status.bot_tasks)):
+                            if status.bot_tasks[idx]["task"] == task:
+                                log_func('INFO', 'Task', "Task completed:",
+                                        status.bot_tasks[idx]['task'].get_name(),
+                                        "Time:", time.time() - status.bot_tasks[idx]['start_time'])
+                                status.bot_tasks.pop(idx)
+                                break
+
+                    except asyncio.CancelledError:
+                        log_func('WARN', 'Task', "Task was cancelled")
+                    except Exception as e:
+                        log_func('ERROR', 'Task', "Task failed with error:", e, '\n' + traceback.format_exc())
+                    finally:
+                        # 确保任务从列表中移除
+                        for idx in range(len(status.bot_tasks)):
+                            if status.bot_tasks[idx]["task"] == task:
+                                status.bot_tasks.pop(idx)
+                                break
+
+                task.add_done_callback(task_done_callback)
+
+
+
             if message["post_type"] == "message" and message["message_type"] == "group":
                 for bot in Bots:
-                    task = asyncio.create_task(bot.receive_group_message(ws, copy.deepcopy(message)))
-                    task_info = {
-                        "task": task,
-                        "bot": bot,
-                        "message": copy.deepcopy(message),
-                        "start_time": time.time(),
-                        "websocket": ws
-                    }
-                    status.bot_tasks.append(task_info)
+                    await bot_process(bot.receive_group_message)
+            elif message["post_type"] == "notice":
+                notice_type = message.get("notice_type", "unknown")
+                sub_type = message.get("sub_type", "unknown")
+                
+                log_func('INFO', 'Notice', f"Received {notice_type}/{sub_type} notice")
+                
+                if notice_type == "notify" and sub_type == "poke":
+                    for bot in Bots:
+                        await bot_process(bot.receive_poke_notice)
 
-                    def task_done_callback(task):
-                        try:
-                            # 获取任务结果，这会重新引发任何未处理的异常
-                            task.result()
-
-                            # 如果没有异常，记录成功信息
-                            for idx in range(len(status.bot_tasks)):
-                                if status.bot_tasks[idx]["task"] == task:
-                                    log_func('INFO', 'Task', "Task completed:",
-                                             status.bot_tasks[idx]['task'].get_name(),
-                                             "Time:", time.time() - status.bot_tasks[idx]['start_time'])
-                                    status.bot_tasks.pop(idx)
-                                    break
-
-                        except asyncio.CancelledError:
-                            log_func('WARN', 'Task', "Task was cancelled")
-                        except Exception as e:
-                            log_func('ERROR', 'Task', "Task failed with error:", e, '\n' + traceback.format_exc())
-                        finally:
-                            # 确保任务从列表中移除
-                            for idx in range(len(status.bot_tasks)):
-                                if status.bot_tasks[idx]["task"] == task:
-                                    status.bot_tasks.pop(idx)
-                                    break
-
-                    task.add_done_callback(task_done_callback)
             else:
                 log_func('WARN', 'Websocket', "Unsupported message type: ", message)
         except websockets.exceptions.ConnectionClosedError:
@@ -156,6 +174,10 @@ async def process_message(ws, Bots, echo_pool, status: Status):
             break
         except asyncio.TimeoutError:
             log_func('WARN', 'Websocket', "Message processing timeout")
+            timeout_count += 1
+            if timeout_count > 10:
+                log_func('ERROR', 'Websocket', "Cannot hold connection! is the bot backend still alive? Reconnecting...")
+                break
             continue
         except Exception as e:
             log_func('ERROR', 'Websocket', "Error in message processor: ", e)

@@ -604,6 +604,7 @@ async def handle_tools(tool_name, args):
 class Plugin:
     context_manager = None
     lock = Lock()
+    rate_limiter = plugin_context.RateLimiter(300, 300)
 
     @staticmethod
     def create():
@@ -817,9 +818,22 @@ Powered by ✨Gemini-Flash-2.0
                         return True
                 return False
 
+            async def on_limit_exceeded(wait_time):
+                pass
+
+            @plugin_context.async_ratelimit(
+                limiter=Plugin.rate_limiter,
+                on_limit_exceeded=on_limit_exceeded,
+                throw_on_limit=True,
+            )
+            async def limited_handler():
+                pass
+
             if Plugin._test_if_being_at(
                 message["message"], message["self_id"]
             ) or check_trigger(message_str):
+                await limited_handler() # 检查是否超过限制
+
                 log_func(
                     "INFO",
                     entity_name,
@@ -903,7 +917,12 @@ Powered by ✨Gemini-Flash-2.0
                             )
                             processed_response = response
 
-                        await api.send_group_message(group_id, processed_response)
+                        await api.send_group_message_separate_audio(
+                            group_id,
+                            await message_codec_package["codec"].decode_CQ_to_message(
+                                processed_response
+                            ),
+                        )
                         await asyncio.sleep(5)
             else:
 
@@ -924,6 +943,11 @@ Powered by ✨Gemini-Flash-2.0
             raise plugin_context.SkipFollow
         except plugin_context.Skip:
             raise plugin_context.Skip
+        except plugin_context.RateLimitedError as e:
+            await api.send_group_message(
+                message["group_id"],
+                str(e)
+            )
         except Exception as e:
             log_func(
                 "ERROR",
@@ -934,3 +958,46 @@ Powered by ✨Gemini-Flash-2.0
                 message["group_id"],
                 "AI Chat Plugin Failed to Handle Message!\n" + str(e),
             )
+
+    @staticmethod
+    async def on_poke(ws, message):
+        api = onebot_package["api"].OneBotAPI(ws, plugin_context.echo_pool)
+        group_id = message["group_id"]
+
+        # 创建一个伪造的消息结构，模拟一条群消息
+        fake_message = {
+            "message_id": message.get("message_id", "0"),
+            "group_id": group_id,
+            "user_id": message.get("user_id", "0"),
+            "self_id": message.get("self_id", "0"),
+            "sender": message.get("sender", {
+                "nickname": "unknown",
+                "user_id": message.get("user_id", "0")
+            }),
+            "message": [
+                {
+                    "type": "text",
+                    "data": {
+                        "text": "[戳一戳]"
+                    }
+                },
+                # 添加一个at机器人自己的部分，确保触发回复
+                {
+                    "type": "at",
+                    "data": {
+                        "qq": str(message.get("self_id", "0"))
+                    }
+                }
+            ]
+        }
+
+        # 调用群消息处理函数处理这个伪造的消息
+        try:
+            await Plugin.on_group_message(ws, fake_message)
+        except Exception as e:
+            log_func(
+                "ERROR",
+                entity_name,
+                f"Failed to handle poke as group message: {traceback.format_exc()}"
+            )
+            await api.send_group_message(group_id, "处理戳一戳时出错！")

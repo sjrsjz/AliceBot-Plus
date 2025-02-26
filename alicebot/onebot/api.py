@@ -111,13 +111,13 @@ class OneBotAPI:
         for i in message:
             if i["type"] == "record":
                 if other_message:
-                    await OneBotAPI.send_group_message(group_id, other_message, auto_escape)
+                    await self.send_group_message(group_id, other_message, auto_escape)
                     other_message = []
-                await OneBotAPI.send_group_message(group_id, [i], auto_escape)
+                await self.send_group_message(group_id, [i], auto_escape)
             else:
                 other_message.append(i)
         if other_message:
-            await OneBotAPI.send_group_message(group_id, other_message, auto_escape)
+            await self.send_group_message(group_id, other_message, auto_escape)
 
     async def send_private_message(self, user_id, message, auto_escape=False):
         if self.echo_pool.echo_dict is None: raise Exception("Echo dict not set")

@@ -75,6 +75,7 @@ To use TUI, you can use the following control keys:
             encoded_message = await message_codec_package['codec'].encode_message_to_CQ(message["message"])
             if encoded_message.strip() == "#help":
                 await api.send_group_message(message["group_id"], message=bot_help.strip())
+                raise plugin_context.SkipFollow
             
         await handler()
 
