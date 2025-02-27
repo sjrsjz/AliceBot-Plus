@@ -92,8 +92,8 @@ python -m alicebot
 {
     "gemini": [], // Gemini API Key，从谷歌AI平台获取
     "gemini_index": 0,
-    "tts": [], // TTS API Key，从硅基流动平台获取
-    "tts_index": 0
+    "siliconflow": [], // SiliconFlow API Key，从硅基流动平台获取
+    "siliconflow_index": 0
 }
 ```
 

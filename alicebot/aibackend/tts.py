@@ -31,7 +31,7 @@ async def text_to_speech_cosyvoice(text, emotion):
         "gain": 0,
     }
     headers = {
-        "Authorization": f"Bearer {package['apikey'].config.key_tts()}",
+        "Authorization": f"Bearer {package['apikey'].config.key_siliconflow()}",
         "Content-Type": "application/json",
     }
 

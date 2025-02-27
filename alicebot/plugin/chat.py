@@ -31,6 +31,7 @@ aibackend_package.load_module(
     "gemini", hot_reload=True, log_func=log_func
 )  # AI Backend
 aibackend_package.load_module("tts", hot_reload=True, log_func=log_func)  # AI Backend
+aibackend_package.load_module("aipaint", hot_reload=True, log_func=log_func)  # AI Backend
 
 
 document_renderer_package = moduleloader.ModuleLoader(
@@ -404,6 +405,15 @@ def get_typeset_handler(api, browser, template):
         except Exception as e:
             log_func("ERROR", entity_name, f"Failed to render markdown: {e}")
             return markdown_str
+        
+    async def handle_graphic_art(x: dict, **kwargs) -> str:
+        is_vertical = x.get("vertical", False)
+        style = x.get("style", "anime")
+        prompt = x["prompt"]
+        size = aibackend_package['aipaint'].ImageSize.TALL if is_vertical else aibackend_package['aipaint'].ImageSize.WIDE
+        style = aibackend_package['aipaint'].ImageStyle.ANIME if style == "anime" else aibackend_package['aipaint'].ImageStyle.PHOTO
+        result = await aibackend_package['aipaint'].generate_image_siliconflow(prompt, size, style)
+        return f"[CQ:image,file=base64://{base64.b64encode(result).decode()}]"
 
     return {
         "DocumentRender": handle_markdown_render,
@@ -411,6 +421,7 @@ def get_typeset_handler(api, browser, template):
         "write_to_file": handle_write_file,
         "text_to_speech": handle_tts,
         "display_wolframalpha": handle_wolfram,
+        "graphic_art_in_English": handle_graphic_art
     }
 
 
@@ -604,7 +615,7 @@ async def handle_tools(tool_name, args):
 class Plugin:
     context_manager = None
     lock = Lock()
-    rate_limiter = plugin_context.RateLimiter(300, 900)
+    rate_limiter = plugin_context.RateLimiter(300, 400)
 
     @staticmethod
     def create():

@@ -17,7 +17,7 @@ class RateLimitedError(Exception):
 
 
 class RateLimiter:
-    """根据最近的调用频率自动调整冷却时间的限速器"""
+    """根据最近的调用频率自动调整冷却时间的限速器，最大调用CD为 sqrt(multiplier), 最大窗口期调用次数为 period / sqrt(multiplier)"""
 
     def __init__(self, period: float, multiplier: float):
         """
