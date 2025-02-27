@@ -738,7 +738,7 @@ Powered by ✨Gemini-Flash-2.0
                 sender["user_id"],
                 "is not in the admin list.",
             )
-            raise plugin_context.SkipFollow
+            raise plugin_context.SkipFollow()
         command = command.replace(
             plugin_context.bot_entity.sudo_command_trigger, "", 1
         ).strip()
@@ -768,7 +768,7 @@ Powered by ✨Gemini-Flash-2.0
             log_func("ERROR", "Bot", "Failed to execute command:", e)
             await message_sender_func(f"Failed to execute command.\n{e}")
             raise Exception("#sudo command is invalid: " + command)
-        raise plugin_context.SkipFollow
+        raise plugin_context.SkipFollow()
 
     @staticmethod
     async def process_context_command(message, message_sender_func, context):
@@ -810,7 +810,7 @@ Powered by ✨Gemini-Flash-2.0
             log_func("ERROR", "Bot", "Failed to execute command:", e)
             await message_sender_func(f"Failed to execute command.\n{e}")
             raise Exception("#sudo command is invalid: " + command)
-        raise plugin_context.SkipFollow
+        raise plugin_context.SkipFollow()
 
     @staticmethod
     async def on_group_message(ws, message):
@@ -965,9 +965,9 @@ Powered by ✨Gemini-Flash-2.0
         try:
             await handler()
         except plugin_context.SkipFollow:
-            raise plugin_context.SkipFollow
+            raise plugin_context.SkipFollow()
         except plugin_context.Skip:
-            raise plugin_context.Skip
+            raise plugin_context.Skip()
         except plugin_context.RateLimitedError as e:
             await api.send_group_message(message["group_id"], str(e))
         except Exception as e:

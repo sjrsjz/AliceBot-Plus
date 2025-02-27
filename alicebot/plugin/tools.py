@@ -77,7 +77,7 @@ class Plugin:
                         },
                     },
                 )
-                raise plugin_context.SkipFollow
+                raise plugin_context.SkipFollow()
 
             typst_trigger = "typst "
             if encoded_message.startswith(typst_trigger):
@@ -106,5 +106,5 @@ class Plugin:
                             },
                         },
                     )
-                raise plugin_context.SkipFollow
+                raise plugin_context.SkipFollow()
         await handler()

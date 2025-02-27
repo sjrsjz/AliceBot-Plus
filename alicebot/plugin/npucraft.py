@@ -62,6 +62,6 @@ class Plugin:
 平面 https://map.npucraft.com/dynmap-resource
 全部地图请发送关键词 "Ciallo" """.strip(),
                 )
-                raise plugin_context.SkipFollow
+                raise plugin_context.SkipFollow()
 
         await handler()
