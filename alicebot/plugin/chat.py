@@ -31,7 +31,9 @@ aibackend_package.load_module(
     "gemini", hot_reload=True, log_func=log_func
 )  # AI Backend
 aibackend_package.load_module("tts", hot_reload=True, log_func=log_func)  # AI Backend
-aibackend_package.load_module("aipaint", hot_reload=True, log_func=log_func)  # AI Backend
+aibackend_package.load_module(
+    "aipaint", hot_reload=True, log_func=log_func
+)  # AI Backend
 
 
 document_renderer_package = moduleloader.ModuleLoader(
@@ -405,14 +407,24 @@ def get_typeset_handler(api, browser, template):
         except Exception as e:
             log_func("ERROR", entity_name, f"Failed to render markdown: {e}")
             return markdown_str
-        
+
     async def handle_graphic_art(x: dict, **kwargs) -> str:
         is_vertical = x.get("vertical", False)
         style = x.get("style", "anime")
         prompt = x["prompt"]
-        size = aibackend_package['aipaint'].ImageSize.TALL if is_vertical else aibackend_package['aipaint'].ImageSize.WIDE
-        style = aibackend_package['aipaint'].ImageStyle.ANIME if style == "anime" else aibackend_package['aipaint'].ImageStyle.PHOTO
-        result = await aibackend_package['aipaint'].generate_image_siliconflow(prompt, size, style)
+        size = (
+            aibackend_package["aipaint"].ImageSize.TALL
+            if is_vertical
+            else aibackend_package["aipaint"].ImageSize.WIDE
+        )
+        style = (
+            aibackend_package["aipaint"].ImageStyle.ANIME
+            if style == "anime"
+            else aibackend_package["aipaint"].ImageStyle.PHOTO
+        )
+        result = await aibackend_package["aipaint"].generate_image_siliconflow(
+            prompt, size, style, aibackend_package["aipaint"].APILevel.FREE
+        )
         return f"[CQ:image,file=base64://{base64.b64encode(result).decode()}]"
 
     return {
@@ -421,7 +433,7 @@ def get_typeset_handler(api, browser, template):
         "write_to_file": handle_write_file,
         "text_to_speech": handle_tts,
         "display_wolframalpha": handle_wolfram,
-        "graphic_art_in_English": handle_graphic_art
+        "graphic_art_in_English": handle_graphic_art,
     }
 
 
@@ -744,7 +756,9 @@ Powered by ✨Gemini-Flash-2.0
                 await message_sender_func("Set trigger successfully.")
             if "set_instruction" in command_json:
                 if command_json["set_instruction"] == []:
-                    group_context["ai_params"]["system_instruction"] = get_default_system_instruction()
+                    group_context["ai_params"][
+                        "system_instruction"
+                    ] = get_default_system_instruction()
                 else:
                     group_context["ai_params"]["system_instruction"] = command_json[
                         "set_instruction"
@@ -843,7 +857,7 @@ Powered by ✨Gemini-Flash-2.0
             if Plugin._test_if_being_at(
                 message["message"], message["self_id"]
             ) or check_trigger(message_str):
-                await limited_handler() # 检查是否超过限制
+                await limited_handler()  # 检查是否超过限制
 
                 log_func(
                     "INFO",
@@ -955,10 +969,7 @@ Powered by ✨Gemini-Flash-2.0
         except plugin_context.Skip:
             raise plugin_context.Skip
         except plugin_context.RateLimitedError as e:
-            await api.send_group_message(
-                message["group_id"],
-                str(e)
-            )
+            await api.send_group_message(message["group_id"], str(e))
         except Exception as e:
             log_func(
                 "ERROR",
@@ -981,25 +992,15 @@ Powered by ✨Gemini-Flash-2.0
             "group_id": group_id,
             "user_id": message.get("user_id", "0"),
             "self_id": message.get("self_id", "0"),
-            "sender": message.get("sender", {
-                "nickname": "unknown",
-                "user_id": message.get("user_id", "0")
-            }),
+            "sender": message.get(
+                "sender",
+                {"nickname": "unknown", "user_id": message.get("user_id", "0")},
+            ),
             "message": [
-                {
-                    "type": "text",
-                    "data": {
-                        "text": "[戳一戳]"
-                    }
-                },
+                {"type": "text", "data": {"text": "[戳一戳]"}},
                 # 添加一个at机器人自己的部分，确保触发回复
-                {
-                    "type": "at",
-                    "data": {
-                        "qq": str(message.get("target_id", "0"))
-                    }
-                }
-            ]
+                {"type": "at", "data": {"qq": str(message.get("target_id", "0"))}},
+            ],
         }
 
         # 调用群消息处理函数处理这个伪造的消息
@@ -1009,6 +1010,6 @@ Powered by ✨Gemini-Flash-2.0
             log_func(
                 "ERROR",
                 entity_name,
-                f"Failed to handle poke as group message: {traceback.format_exc()}"
+                f"Failed to handle poke as group message: {traceback.format_exc()}",
             )
             await api.send_group_message(group_id, "处理戳一戳时出错！")

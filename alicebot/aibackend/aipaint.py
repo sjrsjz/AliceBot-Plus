@@ -25,11 +25,20 @@ class ImageSize(enum.Enum):
     WIDE = "1440x720"
     SQUARE = "1024x1024"
 
+
 class ImageStyle(enum.Enum):
     ANIME = "anime"
     PHOTO = "photo"
 
-async def generate_image_siliconflow(prompt, size: ImageSize, style: ImageStyle, seed = None, step = 20):
+
+class APILevel:
+    FREE = "free"
+    PRO = "pro"
+
+
+async def generate_image_siliconflow(
+    prompt, size: ImageSize, style: ImageStyle, api_level: APILevel, seed=None, step=20
+):
     url = "https://api.siliconflow.cn/v1/images/generations"
 
     if style == ImageStyle.ANIME:
@@ -39,17 +48,23 @@ async def generate_image_siliconflow(prompt, size: ImageSize, style: ImageStyle,
     else:
         raise ValueError("Invalid image style")
 
+    if api_level == APILevel.FREE:
+        model = "black-forest-labs/FLUX.1-schnell"
+    elif api_level == APILevel.PRO:
+        model = "black-forest-labs/FLUX.1-dev"
+    else:
+        raise ValueError("Invalid API level")
+
     payload = {
-        "model": "black-forest-labs/FLUX.1-dev",
+        "model": model,
         "prompt": prompt,
         "num_inference_steps": step,
         "image_size": size.value,
     }
 
-
     headers = {
         "Authorization": f"Bearer {package['apikey'].config.key_siliconflow()}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
 
     if seed is not None:
@@ -63,5 +78,8 @@ async def generate_image_siliconflow(prompt, size: ImageSize, style: ImageStyle,
             image_data = await session.get(image_url)
             return await image_data.read()
 
-async def generate_image(prompt, size: ImageSize, style: ImageStyle, seed = None, step = 20):
-    return await generate_image_siliconflow(prompt, size, style, seed, step)
+
+async def generate_image(
+    prompt, size: ImageSize, style: ImageStyle, api_level: APILevel, seed=None, step=20
+):
+    return await generate_image_siliconflow(prompt, size, style, api_level, seed, step)
