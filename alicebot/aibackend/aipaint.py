@@ -43,6 +43,7 @@ async def generate_image_siliconflow(prompt, size: ImageSize, style: ImageStyle,
         "model": "black-forest-labs/FLUX.1-dev",
         "prompt": prompt,
         "num_inference_steps": step,
+        "image_size": size.value,
     }
 
 
