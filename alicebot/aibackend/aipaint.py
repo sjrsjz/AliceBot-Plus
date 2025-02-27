@@ -21,8 +21,8 @@ package.load_module("apikey", hot_reload=True, log_func=log_func)
 
 
 class ImageSize(enum.Enum):
-    TALL = "720x1280"
-    WIDE = "1280x720"
+    TALL = "720x1440"
+    WIDE = "1440x720"
     SQUARE = "1024x1024"
 
 class ImageStyle(enum.Enum):
@@ -61,6 +61,6 @@ async def generate_image_siliconflow(prompt, size: ImageSize, style: ImageStyle,
 
             image_data = await session.get(image_url)
             return await image_data.read()
-        
+
 async def generate_image(prompt, size: ImageSize, style: ImageStyle, seed = None, step = 20):
     return await generate_image_siliconflow(prompt, size, style, seed, step)
