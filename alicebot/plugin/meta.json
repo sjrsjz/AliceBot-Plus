@@ -3,12 +3,12 @@
         "help": {
             "active": 1,
             "permission": 0,
-            "priority": 2
+            "priority": 1
         },
         "chat": {
             "active": 1,
             "permission": 0,
-            "priority": 2
+            "priority": 0
         },
         "anti_withdraw": {
             "active": 1,
@@ -18,7 +18,12 @@
         "npucraft": {
             "active": 1,
             "permission": 0,
-            "priority": 0
+            "priority": 1
+        },
+        "tools": {
+            "active": 1,
+            "permission": 0,
+            "priority": 1
         }
     }
 }

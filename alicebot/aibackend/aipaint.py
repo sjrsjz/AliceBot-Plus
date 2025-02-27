@@ -62,6 +62,8 @@ async def generate_image_siliconflow(
         "image_size": size.value,
     }
 
+    log_func("INFO", "SiliconFlow API", f"Generating image with payload: {payload}")
+
     headers = {
         "Authorization": f"Bearer {package['apikey'].config.key_siliconflow()}",
         "Content-Type": "application/json",

@@ -392,7 +392,7 @@ async def process_chatbot_typeset(message: str, FUNCTION_HANDLERS: dict, **kwarg
                 try:
                     result = await handler(part["args"], **kwargs)
                 except Exception as e:                    
-                    log_func('INFO', 'ERROR', f"Function call failed: {str(e)}")
+                    log_func("ERROR", "AIToolCall", f"Function call failed: {str(e)}")
                     result = f" [{part['name']}] {part['args']} "
                 final_msg += result
             else:
