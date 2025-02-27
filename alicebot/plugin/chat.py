@@ -985,7 +985,7 @@ Powered by ✨Gemini-Flash-2.0
                 {
                     "type": "at",
                     "data": {
-                        "qq": str(message.get("self_id", "0"))
+                        "qq": str(message.get("target_id", "0"))
                     }
                 }
             ]

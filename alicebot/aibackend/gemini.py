@@ -113,6 +113,14 @@ _safety_settings = {
     HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
 }
 
+_generation_config = {
+    "temperature": 0.7,
+    "top_p": 0.95,
+    "top_k": 40,
+    "max_output_tokens": 8192,
+    "response_mime_type": "text/plain",
+}
+
 async def chat_gemini_direct(messages, system_instruction):
     messages = [
         {
@@ -154,13 +162,7 @@ async def chat_gemini(
     gemini_messages, _ = convert_to_gemini_messages(messages, None)
     gai.configure(api_key=package["apikey"].config.key_gemini())
 
-    generation_config = {
-        "temperature": 1.2,
-        "top_p": 0.96,
-        "top_k": 40,
-        "max_output_tokens": 8192,
-        "response_mime_type": "text/plain",
-    }
+    
     model_name = "gemini-2.0-flash-001" if not fallback_1_5 else "gemini-1.5-flash"
 
     if tool_call_result:
@@ -184,14 +186,14 @@ async def chat_gemini(
     model = gai.GenerativeModel(
         model_name,
         system_instruction=prompts_package["template"].GEMINI_CHAT_INSTRUCTION,
-        generation_config=generation_config,
+        generation_config=_generation_config,
     )
     for i in range(5):
         try:
             response = await model.generate_content_async(
                 new_message,
                 safety_settings=_safety_settings,
-                generation_config=generation_config,
+                generation_config=_generation_config,
             )
             break
         except Exception as e:
@@ -224,13 +226,6 @@ async def chat_gemini_tool_call(
     formatted_tool_names = "\n".join(tools_name)
     gemini_messages, tools = convert_to_gemini_messages(messages, tools)
 
-    generation_config = {
-        "temperature": 0.7,
-        "top_p": 0.96,
-        "top_k": 40,
-        "max_output_tokens": 8192,
-        "response_mime_type": "text/plain",
-    }
     model_name = "gemini-2.0-flash-001" if not fallback_1_5 else "gemini-1.5-flash"
     log_func("DEBUG", "Gemini", f"Using model: {model_name}")
 
@@ -245,7 +240,7 @@ async def chat_gemini_tool_call(
                 "mode": "ANY",
             },
         },
-        generation_config=generation_config,
+        generation_config=_generation_config,
     )
     response = await model.generate_content_async(
         gemini_messages, safety_settings=_safety_settings
@@ -264,8 +259,6 @@ async def chat_gemini_tool_call(
     _assert_safety(response)
 
     return response.text, None
-
-
 
 
 def _assert_safety(response):
