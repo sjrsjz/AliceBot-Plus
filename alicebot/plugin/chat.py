@@ -422,7 +422,7 @@ def get_typeset_handler(api, browser, template):
             if style == "anime"
             else aibackend_package["aipaint"].ImageStyle.PHOTO
         )
-        result = await aibackend_package["aipaint"].generate_image_siliconflow(
+        result = await aibackend_package["aipaint"].generate_image(
             prompt, size, style, aibackend_package["aipaint"].APILevel.FREE
         )
         return f"[CQ:image,file=base64://{base64.b64encode(result).decode()}]"

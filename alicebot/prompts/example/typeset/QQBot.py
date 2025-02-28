@@ -2,8 +2,8 @@
 typesets = [
         {
             "name": "graphic_art_in_English",
-            "description": "generate an AI art by using English tags",
-            "detail": """Image Tags:
+            "description": "generate an AI art by using Image Generator",
+            "detail": """You can generate images by using Image Tags:
     - Characters (1girl, 2girls, yuri, etc.)
     - Character names (Alice, Elsa, Sarah, etc.) 
     - Action words (sex, masturbation, fellatio, etc.)

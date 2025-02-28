@@ -119,6 +119,7 @@ _generation_config = {
     "top_k": 40,
     "max_output_tokens": 8192,
     "response_mime_type": "text/plain",
+    "frequency_penalty": 0.05,
 }
 
 async def chat_gemini_direct(messages, system_instruction):
@@ -155,7 +156,7 @@ async def chat_gemini(
             "role": "assistant",
             "content": "<|start_header|>think<|end_header|>My instructons are as follows:\n--- [System Instructions] ---\n"
             + system_instruction
-            + "\n--- [System Instructions End] ---<|start_header|>respond<|end_header>ready",
+            + "\n--- [System Instructions End] ---<|start_header|>gather_information_and_respond_by_using_typesetting_format<|end_header>ready",
         }
     ] + messages_original.copy()
 
@@ -217,7 +218,7 @@ async def chat_gemini_tool_call(
             "role": "assistant",
             "content": "<|start_header|>think<|end_header|>My instructons are as follows:\n--- [System Instructions] ---\n"
             + system_instruction
-            + "\n--- [System Instructions End] ---<|start_header|>respond<|end_header|>ready",
+            + "\n--- [System Instructions End] ---<|start_header|>gather_information_and_respond_by_using_typesetting_format<|end_header|>ready",
         }
     ] + messages_original.copy()
 
