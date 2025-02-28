@@ -180,9 +180,12 @@ class SwarmAPI:
 
     @staticmethod
     async def check_is_available():
-        async with aiohttp.ClientSession() as session:
-            async with session.get(swarm_config.swarm_api_address()) as response:
-                return response.status == 200
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(swarm_config.swarm_api_address(), timeout=5) as response:
+                    return response.status == 200
+        except:
+            return False
 
 async def generate_image_swarm(
     prompt, size: ImageSize, style: ImageStyle, api_level: APILevel, seed=None, step=30
