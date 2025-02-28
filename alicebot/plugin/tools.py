@@ -65,9 +65,15 @@ class Plugin:
             mdr_trigger = "mdr "
             if encoded_message.startswith(mdr_trigger):
                 markdown = encoded_message[len(mdr_trigger):]
-                result = await document_renderer_package["renderer"].MarkdownRenderer(
-                    plugin_context.bot_entity.browser
-                )(markdown)
+                try:
+                    result = await document_renderer_package["renderer"].MarkdownRenderer(
+                        plugin_context.bot_entity.browser
+                    )(markdown)
+                except Exception as e:
+                    await api.send_group_message(
+                        message["group_id"], f"Failed to render markdown:\n{str(e)}"
+                    )
+                    raise plugin_context.SkipFollow()
                 await api.send_group_message(
                     message["group_id"],
                     message={
@@ -82,9 +88,15 @@ class Plugin:
             typst_trigger = "typst "
             if encoded_message.startswith(typst_trigger):
                 typst = encoded_message[len(typst_trigger):]
-                result = await document_renderer_package[
-                    "renderer"
-                ].typst_render.render_async(typst)
+                try:
+                    result = await document_renderer_package[
+                        "renderer"
+                    ].typst_render.render_async(typst)
+                except Exception as e:
+                    await api.send_group_message(
+                        message["group_id"], f"Failed to render typst:\n{str(e)}"
+                    )
+                    raise plugin_context.SkipFollow()
                 if isinstance(result, list):
                     for item in result:
                         await api.send_group_message(
