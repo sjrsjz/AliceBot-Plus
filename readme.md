@@ -86,6 +86,7 @@ python -m alicebot
     "ws_url": "ws://127.0.0.1:8080", // OneBotAPI地址
     "webui_port": 8081 // WebUI端口，监听 0.0.0.0
 }
+```
 
 `interface/webui-config/users.json` 是WebUI的用户配置文件，用于配置WebUI的用户信息。
 
