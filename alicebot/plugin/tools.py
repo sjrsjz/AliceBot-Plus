@@ -50,10 +50,13 @@ class XLangContexts:
                 "interpreter": XLang(),
             }
             self.contexts[group_id]["context"].new_frame(
-                stack=self.contexts[group_id]["stack"], enter_func=True
+                stack=self.contexts[group_id]["stack"], enter_func=True, hidden = True
             )
             self.contexts[group_id]["interpreter"].create_builtins_for_context(
                 self.contexts[group_id]["context"]
+            )
+            self.contexts[group_id]["context"].new_frame(
+                stack=self.contexts[group_id]["stack"], enter_func=True
             )
             log_func(f"XLang context created for group {group_id}")
         return self.contexts[group_id]
