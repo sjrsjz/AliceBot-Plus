@@ -223,7 +223,8 @@ class Plugin:
                             error_printer(str(e))
                             is_error = True
                         finally:
-                            output_printer(str(result))
+                            if not isinstance(result, NoneType):
+                                output_printer(str(result))
 
                         return {
                             "output": output_buffer,
@@ -233,7 +234,7 @@ class Plugin:
 
                     async def xlang_timeout_callback():
                         await api.send_group_message(
-                            message["group_id"], "XLang 执行超时！"
+                            message["group_id"], "XLang execution timeout!"
                         )
 
                     @plugin_context.timeout(10, timeout_callback=xlang_timeout_callback)
@@ -245,12 +246,17 @@ class Plugin:
                         if result["is_error"]:
                             await api.send_group_message(
                                 message["group_id"],
-                                f"执行出错:\n{result['error']}\n输出:\n{result['output']}",
+                                f"{result['error']}\nOutput:\n{result['output']}",
                             )
                         else:
-                            await api.send_group_message(
-                                message["group_id"], f"执行结果:\n{result['output']}"
-                            )
+                            if result["output"] == "":
+                                await api.send_group_message(
+                                    message["group_id"], "Success!"
+                                )
+                            else:
+                                await api.send_group_message(
+                                    message["group_id"], f"{result['output']}"
+                                )
 
                     await run_xlang()
 
