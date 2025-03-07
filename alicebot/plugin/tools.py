@@ -3,7 +3,7 @@ from typing import Callable, Any
 
 import asyncio
 from xlang import XLang, Context, NoneType, String
-import traceback
+import pathlib
 
 log_func: Callable[[Any], None]
 plugin_context: Any  # 插件上下文，由插件管理器传入
@@ -27,6 +27,8 @@ document_renderer = document_renderer_package.load_module(
     "renderer", hot_reload=True, log_func=log_func
 )
 
+xlang_modules_path = pathlib.Path(__file__).parent / "modules"
+xlang_modules_path.mkdir(exist_ok=True)
 
 entity_name = "Tools"
 
@@ -184,6 +186,11 @@ class Plugin:
                         error_buffer = ""
                         is_error = False
 
+                        def safe_open(path, *args, **kwargs):
+                            if ".." in path:
+                                raise FileNotFoundError("Invalid path")
+                            return open(xlang_modules_path / path, *args, **kwargs)
+
                         def print_func(args):
                             list_args = [arg.value for arg in args]
                             output_printer(*list_args)
@@ -218,6 +225,7 @@ class Plugin:
                                 error_printer=error_printer,
                                 output_printer=output_printer,
                                 input_reader=input_reader,
+                                open_func=safe_open,
                             )
                         except Exception as e:
                             error_printer(str(e))

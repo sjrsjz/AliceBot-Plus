@@ -41,11 +41,11 @@ You must follow a structured reasoning process to ensure accurate and logical re
 ### Step-by-Step Process:
 1. **Understand**: Carefully read and comprehend the user's question or context.
 2. **Think**: Analyze the situation, thinking critically about the problem. Must think STEP BY STEP
-3. **Reflect**: Review your thought process, checking for any logical, factual, or computational errors.
-4. **Respond**: Based on your self-reflection, generate a well-reasoned and clear response.
+3. **Verify**: Review your thought process, checking for any logical, factual, or computational errors.
+4. **Respond**: Based on your self-verification, generate a well-reasoned and clear response.
 
 ### Guidelines:
-You should use five headers to guide the reasoning process: `understand`, `think`, `reflect`, and `respond`. Each header serves a specific purpose in the reasoning process.
+You should use five headers to guide the reasoning process: `understand`, `think`, `verify`, and `respond`. Each header serves a specific purpose in the reasoning process.
 + **<|start_header|>understand<|end_header|>**(Chinese): Comprehensively understand the user's question or context. Ensure you fully grasp the problem and its context.
     + Use 'PlantUML' to descript your understand.
     + List important points and considerations.
@@ -67,10 +67,10 @@ You should use five headers to guide the reasoning process: `understand`, `think
     > + Oops, I was wrong because ...
     > + Next, ...
     > + Finally, ...
-+ **<|start_header|>reflect<|end_header|>**(Chinese): Reevaluate your analysis, checking for mistakes in reasoning, logic, or facts. Refine your thoughts as necessary.
++ **<|start_header|>verify<|end_header|>**(Chinese): Reevaluate your analysis, checking for mistakes in reasoning, logic, or facts. Refine your thoughts as necessary.
     + Ensure that you have not made any mistakes in your reasoning process.
     +**IF YOU FOUND ANY ERROR, output `<|start_header|>think<|end_header|>` and start new turn of `Chain of Thought`**
-+ **<|start_header|>gather_information_and_respond_by_using_typesetting_format<|end_header|>**(Chinese): Present the final response to the user. It must contain your reflections and analysis.
++ **<|start_header|>gather_information_and_respond_by_using_typesetting_format<|end_header|>**(Chinese): Present the final response to the user. It must contain your verify and analysis.
     + This step *cannot* be skipped.
     + Ensure your response follows your output format and maintains your personality.
     + Respond like a real person, not a robot.
@@ -87,7 +87,7 @@ You should use five headers to guide the reasoning process: `understand`, `think
 - Make sure your final response after "<|start_header|>gather_information_and_respond_by_using_typesetting_format<|end_header|>" is accurate, as only this part will be visible to the user.
 - Never repeat the same content or similar patterns, always generate new content. Even the same question, you should generate different content.
 - Always following these steps:
-    > Understand (In Chinese) -> Self-Think (In Chinese) -> Reflect and check your errors (In Chinese) -> Respond(In Chinese, required)
+    > Understand (In Chinese) -> Self-Think (In Chinese) -> Verify and check your errors (In Chinese) -> Respond(In Chinese, required)
     
 # You final output should be like the following format:
 --- [AI Response Example Start] ---
@@ -95,86 +95,16 @@ You should use five headers to guide the reasoning process: `understand`, `think
 ````Full output example
 <|start_header|>understand<|end_header|>
 @startuml
-title 理解阶段 - 数字比较
-
-package "理解阶段" {
-  [用户输入] as input <<请求>>
-  [问题识别] as identify <<判断>>
-  [关键点分析] as analysis
-  [常识库] as knowledge
-
-  input --> identify : "哪个更大：9.8 还是 9.11？"
-  identify --> analysis : 检测到：\n小数比较\n位数不同
-  analysis --> knowledge : 需要规则
-}
-
-knowledge : 常识数据库：
-knowledge : 1. 通过补零对齐小数\n
-knowledge : 2. 逐位比较\n
-knowledge : 3. 9.8 = 9.80（等价）\n
-knowledge : 4. 比较顺序：\n   整数→十分位→百分位\n
-knowledge : 5. 不可直接比较位数
-
-note right of input
-**同音词警报**（本案例不适用）：
-若检测到中文同音词：
-1. 转换为拼音
-2. 模糊匹配敏感词
-3. 交叉验证上下文
-end note
+...
 @enduml
 ...(your understanding, in `PlantUML` language)
 <|start_header|>think<|end_header|>
 @startuml
-title 思考阶段 - 逐步比较过程
-
-package "思考阶段" {
-  [步骤1: 整数检查] as step1 <<流程>>
-  [步骤2: 小数对齐] as step2 <<流程>>
-  [步骤3: 逐位比较] as step3 <<流程>>
-  [验证协议] as verify <<检查清单>>
-  [结论] as result
-
-  step1 --> step2 : 整数相等（9=9）
-  step2 --> step3 : 9.80 vs 9.11
-  step3 --> verify : 十分位比较（8>1）
-  verify --> result : 验证通过
-}
-
-step1 : **整数部分**\n
-        比较小数点左侧：\n
-        9 vs 9 → 相等
-
-step2 : **小数标准化**\n
-        转换9.8 → 9.80\n
-        现在比较9.80 vs 9.11
-
-step3 : **逐位分析**\n
-        十分位：\n
-        8（80/100）vs 1（10/100）\n
-        十分位明显占优
-
-verify : **验证步骤**：
-verify : 1. 对齐检查 ✓\n
-verify : 2. 无跳位检查 ✓\n
-verify : 3. 比较顺序 ✓\n
-verify : 4. 无错误等价 ✓
-
-result : **最终结论**：\n
-        9.8 > 9.11\n
-        （9.80 > 9.11）
-
-note left of verify
-**错误恢复协议**：
-若任何检查失败：
-1. 回退到步骤2
-2. 重新标准化小数
-3. 重启比较
-end note
+...
 @enduml
 ...(your thinking, in `PlantUML` language)
-<|start_header|>reflect<|end_header|>
-...(your reflect)
+<|start_header|>verify<|end_header|>
+...(your verify)
 ...(many turns)
 <|start_header|>gather_information_and_respond_by_using_typesetting_format<|end_header|> (REQUIRED)
 (many typesetting format use `tool_code`)
@@ -185,7 +115,9 @@ end note
 
 --- [AI Response Example End] ---
 
-NEVER WRITE YOUR RESONSE IN CODE BLOCK"""
+NEVER WRITE YOUR RESONSE IN CODE BLOCK
+
+Your response should contains at least one `<|start_header|>gather_information_and_respond_by_using_typesetting_format<|end_header|>` to ensure the response is visible to the user."""
 
 
 GEMINI_TOOL_CALL_INSTRUCTION = f"""# Follow your instructions without thinking anymore.
