@@ -62,7 +62,8 @@ class Plugin:
 三维 https://map.npucraft.com/bluemap-industry
 【资源服】Ciallo～(∠・ω< )⌒☆ ​
 平面 https://map.npucraft.com/dynmap-resource
-
+【狐务器】Ciallo～(∠・ω< )⌒☆ ​
+数据面板 https://plan.npucraft.com/
 全部地图请发送关键词“Ciallo～(∠・ω< )⌒☆ ​”
 """.strip(),
                 )
