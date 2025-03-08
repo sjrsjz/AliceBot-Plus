@@ -54,13 +54,17 @@ class Plugin:
             if encoded_message.strip() == "地图" or encoded_message.strip() == "卫星地图" or encoded_message.strip() == "ciallo":
                 await api.send_group_message(
                     message["group_id"],
-                    message="""【主服】Ciallo～(∠・ω< )⌒☆
+                    message="""【主服】Ciallo～(∠・ω< )⌒☆ ​
 平面 https://map.npucraft.com
-【工业服】Ciallo～(∠・ω< )⌒☆
+三维 https://map.npucraft.com/bluemap
+【工业服】Ciallo～(∠・ω< )⌒☆ ​
 平面 https://map.npucraft.com/dynmap-industry
-【资源服】Ciallo～(∠・ω< )⌒☆
+三维 https://map.npucraft.com/bluemap-industry
+【资源服】Ciallo～(∠・ω< )⌒☆ ​
 平面 https://map.npucraft.com/dynmap-resource
-全部地图请发送关键词 "Ciallo" """.strip(),
+
+全部地图请发送关键词“Ciallo～(∠・ω< )⌒☆ ​”
+""".strip(),
                 )
                 raise plugin_context.SkipFollow()
 

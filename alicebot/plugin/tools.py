@@ -254,7 +254,7 @@ class Plugin:
                         if result["is_error"]:
                             await api.send_group_message(
                                 message["group_id"],
-                                f"{result['error']}\nOutput:\n{result['output']}",
+                                f"{result['error']}\nOutput:\n{result['output']}".strip(),
                             )
                         else:
                             if result["output"] == "":
@@ -263,7 +263,7 @@ class Plugin:
                                 )
                             else:
                                 await api.send_group_message(
-                                    message["group_id"], f"{result['output']}"
+                                    message["group_id"], f"{result['output']}".strip()
                                 )
 
                     await run_xlang()
