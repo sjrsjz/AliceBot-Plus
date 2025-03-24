@@ -110,7 +110,6 @@ class Plugin:
     def create():
         pass
 
-
     @staticmethod
     def destroy():
         pass
@@ -138,10 +137,11 @@ class Plugin:
                     log_func('ERROR', entity_name, "获取 Danbooru 帖子失败", traceback.format_exc())
                     danbooru_message = None
                 if danbooru_message:
-                    await api.send_group_message(message["group_id"], message=encoded_message)
+                    await api.send_group_message(
+                        message["group_id"], message=danbooru_message
+                    )
                 else:
                     await api.send_group_message(message["group_id"], message="获取 Danbooru 帖子失败")
                 raise plugin_context.SkipFollow()
 
-            
         await handler()
