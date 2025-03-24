@@ -24,7 +24,6 @@ Danbooru Plugin Help
 '''
 
 class Danbooru:
-
     async def get_random_post() -> Optional[dict]:
         """获取一个随机 Danbooru 帖子，返回标签和图片 URL"""
         random_page = random.randint(1, 100)
@@ -59,16 +58,37 @@ class Danbooru:
                     tags = tags.replace("{", "\\{").replace("}", "\\}")
 
                 # 获取图片 URL
-                img_element = post.select_one("img")
                 img_url = ""
-                if img_element:
-                    # 尝试获取原图URL，或者预览图URL
-                    img_url = img_element.get('data-large-file-url') or img_element.get('data-file-url') or img_element.get('src', '')
+                # 尝试查找 source 标签
+                source_element = post.select_one("source")
+                if source_element:
+                    # 从 srcset 属性中提取 URL
+                    srcset = source_element.get('srcset', '')
+                    if srcset:
+                        # 提取 URL (通常格式是 "url 1x, url 2x")
+                        # 我们选择最后一个 URL (通常是高分辨率版本)
+                        parts = srcset.split(',')
+                        if parts:
+                            last_part = parts[-1].strip()
+                            # 移除尺寸说明 (如 "2x")
+                            img_url = last_part.split(' ')[0]
+                
+                # 如果没有找到 source 标签，回退到查找 img 标签
+                if not img_url:
+                    img_element = post.select_one("img")
+                    if img_element:
+                        img_url = (img_element.get('data-large-file-url') or 
+                                img_element.get('data-file-url') or 
+                                img_element.get('src', ''))
 
                 # 获取帖子ID和链接
                 post_id = post.get('data-id', '')
                 post_link = f"https://danbooru.donmai.us/posts/{post_id}" if post_id else ""
 
+                # 添加调试信息
+                log_func('INFO', entity_name, f"Found post with ID: {post_id}")
+                log_func('INFO', entity_name, f"Image URL: {img_url}")
+                
                 return {
                     "tags": tags,
                     "img_url": img_url,
