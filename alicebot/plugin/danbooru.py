@@ -2,37 +2,62 @@ import random
 import bs4
 import base64
 import aiohttp
+import re
 from typing import Optional
 from typing import Callable, Any
 import traceback
+
 log_func: Callable[[Any], None]
-plugin_context: Any # 插件上下文，由插件管理器传入
+plugin_context: Any  # 插件上下文，由插件管理器传入
 
 from loader import moduleloader
-onebot_package = moduleloader.ModuleLoader(plugin_context.onebot_package_path, log_func=log_func)
+
+onebot_package = moduleloader.ModuleLoader(
+    plugin_context.onebot_package_path, log_func=log_func
+)
 onebot_package.load_module("api", hot_reload=True, log_func=log_func)
 
-message_codec_package = moduleloader.ModuleLoader(plugin_context.message_codec_package_path, log_func=log_func)
+message_codec_package = moduleloader.ModuleLoader(
+    plugin_context.message_codec_package_path, log_func=log_func
+)
 message_codec_package.load_module("codec", hot_reload=True, log_func=log_func)
 
 
 entity_name = "Danbooru"
 
-danbooru_help = r'''
+danbooru_help = r"""
 Danbooru Plugin Help
-- #danbooru: Get a random Danbooru post with tags and image URL.
-'''
+- #danbooru: 获取一个随机 Danbooru 帖子
+- #danbooru tag1 tag2: 获取包含指定标签的随机帖子
+"""
+
 
 class Danbooru:
-    async def get_random_post() -> Optional[dict]:
-        """获取一个随机 Danbooru 帖子，返回标签和图片 URL"""
-        random_page = random.randint(1, 100)
-        url = f"https://danbooru.donmai.us/posts?page={random_page}"
+    async def get_random_post(tags: Optional[str] = None) -> Optional[dict]:
+        """获取一个随机 Danbooru 帖子，返回标签和图片 URL
+
+        参数:
+            tags: 可选，指定标签查询，多个标签用空格分隔
+        """
+        # 构建URL，如果有标签就添加到查询中
+        base_url = "https://danbooru.donmai.us/posts"
+
+        if tags:
+            # 替换空格为加号(+)，适合URL查询
+            formatted_tags = tags.replace(" ", "+")
+            url = f"{base_url}?tags={formatted_tags}"
+            log_func("INFO", entity_name, f"按标签搜索: {tags}")
+        else:
+            random_page = random.randint(1, 100)
+            url = f"{base_url}?page={random_page}"
+            log_func("INFO", entity_name, f"随机页面: {random_page}")
 
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
                 if response.status != 200:
-                    log_func('ERROR', entity_name, f"获取帖子列表失败: {response.status}")
+                    log_func(
+                        "ERROR", entity_name, f"获取帖子列表失败: {response.status}"
+                    )
                     return None
 
                 html = await response.text()
@@ -43,88 +68,107 @@ class Danbooru:
                 # 找到所有的帖子元素
                 posts = soup.select("article.post-preview")
                 if not posts:
-                    log_func('ERROR', entity_name, "没有找到帖子元素")
+                    log_func("ERROR", entity_name, "没有找到帖子元素")
                     return None
 
                 # 随机选择一个帖子
                 post = random.choice(posts)
 
                 # 获取帖子ID
-                post_id = post.get('data-id', '')
+                post_id = post.get("data-id", "")
                 if not post_id:
-                    log_func('ERROR', entity_name, "无法获取帖子ID")
+                    log_func("ERROR", entity_name, "无法获取帖子ID")
                     return None
-                    
+
                 # 获取标签
-                tags = post.get('data-tags', '')
-                if tags:
+                post_tags = post.get("data-tags", "")
+                if post_tags:
                     # 处理标签格式
-                    tags = bs4.BeautifulSoup(tags, "html.parser").get_text()
-                    tags = tags.replace(" ", ",")
-                    tags = tags.replace("(", "\\(").replace(")", "\\)")
-                    tags = tags.replace("[", "\\[").replace("]", "\\]")
-                    tags = tags.replace("{", "\\{").replace("}", "\\}")
+                    post_tags = bs4.BeautifulSoup(post_tags, "html.parser").get_text()
+                    post_tags = post_tags.replace(" ", ", ")
+                    post_tags = post_tags.replace("(", "\\(").replace(")", "\\)")
+                    post_tags = post_tags.replace("[", "\\[").replace("]", "\\]")
+                    post_tags = post_tags.replace("{", "\\{").replace("}", "\\}")
 
                 # 构造帖子详情页URL
                 post_link = f"https://danbooru.donmai.us/posts/{post_id}"
 
                 # 访问帖子详情页获取原图
-                log_func('INFO', entity_name, f"访问帖子详情页: {post_link}")
+                log_func("INFO", entity_name, f"访问帖子详情页: {post_link}")
                 async with session.get(post_link) as detail_response:
                     if detail_response.status != 200:
-                        log_func('ERROR', entity_name, f"获取帖子详情失败: {detail_response.status}")
+                        log_func(
+                            "ERROR",
+                            entity_name,
+                            f"获取帖子详情失败: {detail_response.status}",
+                        )
                         return None
 
                     detail_html = await detail_response.text()
                     detail_soup = bs4.BeautifulSoup(detail_html, "html.parser")
 
                     # 尝试找到原图元素
-                    img_element = detail_soup.select_one("section.image-container picture img")
+                    img_element = detail_soup.select_one(
+                        "section.image-container picture img"
+                    )
                     if not img_element:
                         # 尝试备用选择器
-                        img_element = detail_soup.select_one("section.image-container img")
-                    
+                        img_element = detail_soup.select_one(
+                            "section.image-container img"
+                        )
+
                     img_url = ""
                     if img_element:
-                        img_url = img_element.get('src', '')
+                        img_url = img_element.get("src", "")
                         if not img_url:
                             # 尝试其他属性
-                            img_url = (img_element.get('data-large-file-url') or 
-                                    img_element.get('data-file-url'))
-                    
+                            img_url = img_element.get(
+                                "data-large-file-url"
+                            ) or img_element.get("data-file-url")
+
                     # 如果还是找不到，尝试从原页面获取
                     if not img_url:
-                        log_func('INFO', entity_name, "无法从详情页获取图片，尝试从列表页获取")
+                        log_func(
+                            "INFO",
+                            entity_name,
+                            "无法从详情页获取图片，尝试从列表页获取",
+                        )
                         source_element = post.select_one("source")
                         if source_element:
-                            srcset = source_element.get('srcset', '')
+                            srcset = source_element.get("srcset", "")
                             if srcset:
-                                parts = srcset.split(',')
+                                parts = srcset.split(",")
                                 if parts:
                                     last_part = parts[-1].strip()
-                                    img_url = last_part.split(' ')[0]
-                        
+                                    img_url = last_part.split(" ")[0]
+
                         if not img_url:
                             img_element = post.select_one("img")
                             if img_element:
-                                img_url = (img_element.get('data-large-file-url') or 
-                                        img_element.get('data-file-url') or 
-                                        img_element.get('src', ''))
+                                img_url = (
+                                    img_element.get("data-large-file-url")
+                                    or img_element.get("data-file-url")
+                                    or img_element.get("src", "")
+                                )
 
                 # 添加调试信息
-                log_func('INFO', entity_name, f"Found post with ID: {post_id}")
-                log_func('INFO', entity_name, f"Image URL: {img_url}")
-                
+                log_func("INFO", entity_name, f"Found post with ID: {post_id}")
+                log_func("INFO", entity_name, f"Image URL: {img_url}")
+
                 return {
-                    "tags": tags,
+                    "tags": post_tags,
                     "img_url": img_url,
                     "post_id": post_id,
-                    "post_link": post_link
+                    "post_link": post_link,
                 }
 
-    async def get_random_post_and_encode() -> Optional[str]:
-        """获取一个随机 Danbooru 帖子，并返回编码后的消息"""
-        post = await Danbooru.get_random_post()
+    async def get_random_post_and_encode(tags: Optional[str] = None) -> Optional[str]:
+        """获取一个随机 Danbooru 帖子，并返回编码后的消息
+
+        参数:
+            tags: 可选，指定标签查询，多个标签用空格分隔
+        """
+        post = await Danbooru.get_random_post(tags)
         if not post:
             return None
 
@@ -138,7 +182,7 @@ class Danbooru:
                     return None
                 img_data = await response.read()
                 # 将图片数据编码为 base64
-                img_base64 = base64.b64encode(img_data).decode('utf-8')
+                img_base64 = base64.b64encode(img_data).decode("utf-8")
                 # 构造图片 URL
                 img_url = f"base64://{img_base64}"
 
@@ -160,7 +204,7 @@ class Plugin:
 
     @staticmethod
     def description():
-        return r'''Danbooru Plugin'''
+        return r"""Danbooru Plugin - 随机图片和标签搜索"""
 
     @staticmethod
     def create():
@@ -180,24 +224,67 @@ class Plugin:
 
     @staticmethod
     async def on_group_message(ws, message):
-        api = onebot_package['api'].OneBotAPI(ws, plugin_context.echo_pool)
+        api = onebot_package["api"].OneBotAPI(ws, plugin_context.echo_pool)
+
         async def timeout_callback():
             pass
-        @plugin_context.timeout(5, timeout_callback=timeout_callback)
+
+        @plugin_context.timeout(
+            15, timeout_callback=timeout_callback
+        )  # 增加超时时间以适应标签搜索
         async def handler():
-            encoded_message = await message_codec_package['codec'].encode_message_to_CQ(message["message"])
-            if encoded_message.strip() == "#danbooru":
+            encoded_message = await message_codec_package["codec"].encode_message_to_CQ(
+                message["message"]
+            )
+
+            # 匹配 #danbooru 或 #danbooru tag1 tag2 ...
+            danbooru_cmd_match = re.match(
+                r"^#danbooru(?:\s+(.+))?$", encoded_message.strip()
+            )
+
+            if danbooru_cmd_match:
+                tags = danbooru_cmd_match.group(1)  # 如果有标签，获取标签
+
                 try:
-                    danbooru_message = await Danbooru.get_random_post_and_encode()
+                    if tags:
+                        log_func("INFO", entity_name, f"用户请求标签搜索: {tags}")
+                        await api.send_group_message(
+                            message["group_id"],
+                            message=f"正在搜索包含标签: {tags} 的图片...",
+                        )
+                        danbooru_message = await Danbooru.get_random_post_and_encode(
+                            tags
+                        )
+                    else:
+                        log_func("INFO", entity_name, "用户请求随机图片")
+                        await api.send_group_message(
+                            message["group_id"], message="正在获取随机图片..."
+                        )
+                        danbooru_message = await Danbooru.get_random_post_and_encode()
+
                 except Exception as e:
-                    log_func('ERROR', entity_name, "获取 Danbooru 帖子失败", traceback.format_exc())
+                    log_func(
+                        "ERROR",
+                        entity_name,
+                        "获取 Danbooru 帖子失败",
+                        traceback.format_exc(),
+                    )
                     danbooru_message = None
+
                 if danbooru_message:
                     await api.send_group_message(
                         message["group_id"], message=danbooru_message
                     )
                 else:
-                    await api.send_group_message(message["group_id"], message="获取 Danbooru 帖子失败")
+                    if tags:
+                        await api.send_group_message(
+                            message["group_id"],
+                            message=f"未找到包含标签 '{tags}' 的图片",
+                        )
+                    else:
+                        await api.send_group_message(
+                            message["group_id"], message="获取 Danbooru 帖子失败"
+                        )
                 raise plugin_context.SkipFollow()
 
         await handler()
