@@ -1,6 +1,6 @@
 import random
 import bs4
-import re
+import base64
 import aiohttp
 from typing import Optional
 from typing import Callable, Any
@@ -85,6 +85,16 @@ class Danbooru:
         tags = post["tags"]
         img_url = post["img_url"]
         post_link = post["post_link"]
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(img_url) as response:
+                if response.status != 200:
+                    return None
+                img_data = await response.read()
+                # 将图片数据编码为 base64
+                img_base64 = base64.b64encode(img_data).decode('utf-8')
+                # 构造图片 URL
+                img_url = f"base64://{img_base64}"
 
         # 构造消息
         message = f"[CQ:image,file={img_url}]\nTags: {tags}\nLink: {post_link}"
