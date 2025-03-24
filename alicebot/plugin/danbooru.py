@@ -32,6 +32,7 @@ class Danbooru:
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
                 if response.status != 200:
+                    log_func('ERROR', entity_name, f"获取帖子列表失败: {response.status}")
                     return None
 
                 html = await response.text()
@@ -42,11 +43,18 @@ class Danbooru:
                 # 找到所有的帖子元素
                 posts = soup.select("article.post-preview")
                 if not posts:
+                    log_func('ERROR', entity_name, "没有找到帖子元素")
                     return None
 
                 # 随机选择一个帖子
                 post = random.choice(posts)
 
+                # 获取帖子ID
+                post_id = post.get('data-id', '')
+                if not post_id:
+                    log_func('ERROR', entity_name, "无法获取帖子ID")
+                    return None
+                    
                 # 获取标签
                 tags = post.get('data-tags', '')
                 if tags:
@@ -57,33 +65,51 @@ class Danbooru:
                     tags = tags.replace("[", "\\[").replace("]", "\\]")
                     tags = tags.replace("{", "\\{").replace("}", "\\}")
 
-                # 获取图片 URL
-                img_url = ""
-                # 尝试查找 source 标签
-                source_element = post.select_one("source")
-                if source_element:
-                    # 从 srcset 属性中提取 URL
-                    srcset = source_element.get('srcset', '')
-                    if srcset:
-                        # 提取 URL (通常格式是 "url 1x, url 2x")
-                        # 我们选择最后一个 URL (通常是高分辨率版本)
-                        parts = srcset.split(',')
-                        if parts:
-                            last_part = parts[-1].strip()
-                            # 移除尺寸说明 (如 "2x")
-                            img_url = last_part.split(' ')[0]
-                
-                # 如果没有找到 source 标签，回退到查找 img 标签
-                if not img_url:
-                    img_element = post.select_one("img")
-                    if img_element:
-                        img_url = (img_element.get('data-large-file-url') or 
-                                img_element.get('data-file-url') or 
-                                img_element.get('src', ''))
+                # 构造帖子详情页URL
+                post_link = f"https://danbooru.donmai.us/posts/{post_id}"
 
-                # 获取帖子ID和链接
-                post_id = post.get('data-id', '')
-                post_link = f"https://danbooru.donmai.us/posts/{post_id}" if post_id else ""
+                # 访问帖子详情页获取原图
+                log_func('INFO', entity_name, f"访问帖子详情页: {post_link}")
+                async with session.get(post_link) as detail_response:
+                    if detail_response.status != 200:
+                        log_func('ERROR', entity_name, f"获取帖子详情失败: {detail_response.status}")
+                        return None
+
+                    detail_html = await detail_response.text()
+                    detail_soup = bs4.BeautifulSoup(detail_html, "html.parser")
+
+                    # 尝试找到原图元素
+                    img_element = detail_soup.select_one("section.image-container picture img")
+                    if not img_element:
+                        # 尝试备用选择器
+                        img_element = detail_soup.select_one("section.image-container img")
+                    
+                    img_url = ""
+                    if img_element:
+                        img_url = img_element.get('src', '')
+                        if not img_url:
+                            # 尝试其他属性
+                            img_url = (img_element.get('data-large-file-url') or 
+                                    img_element.get('data-file-url'))
+                    
+                    # 如果还是找不到，尝试从原页面获取
+                    if not img_url:
+                        log_func('INFO', entity_name, "无法从详情页获取图片，尝试从列表页获取")
+                        source_element = post.select_one("source")
+                        if source_element:
+                            srcset = source_element.get('srcset', '')
+                            if srcset:
+                                parts = srcset.split(',')
+                                if parts:
+                                    last_part = parts[-1].strip()
+                                    img_url = last_part.split(' ')[0]
+                        
+                        if not img_url:
+                            img_element = post.select_one("img")
+                            if img_element:
+                                img_url = (img_element.get('data-large-file-url') or 
+                                        img_element.get('data-file-url') or 
+                                        img_element.get('src', ''))
 
                 # 添加调试信息
                 log_func('INFO', entity_name, f"Found post with ID: {post_id}")
