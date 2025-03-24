@@ -4,6 +4,7 @@ import re
 import aiohttp
 from typing import Optional
 from typing import Callable, Any
+import traceback
 log_func: Callable[[Any], None]
 plugin_context: Any # 插件上下文，由插件管理器传入
 
@@ -129,7 +130,11 @@ class Plugin:
         async def handler():
             encoded_message = await message_codec_package['codec'].encode_message_to_CQ(message["message"])
             if encoded_message.strip() == "#danbooru":
-                danbooru_message = await Danbooru.get_random_post_and_encode()
+                try:
+                    danbooru_message = await Danbooru.get_random_post_and_encode()
+                except Exception as e:
+                    log_func('ERROR', entity_name, "获取 Danbooru 帖子失败", traceback.format_exc())
+                    danbooru_message = None
                 if danbooru_message:
                     await api.send_group_message(message["group_id"], message=danbooru_message)
                 else:
