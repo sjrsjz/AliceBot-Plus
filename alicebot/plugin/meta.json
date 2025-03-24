@@ -24,6 +24,11 @@
             "active": 1,
             "permission": 0,
             "priority": 1
+        },
+        "danbooru": {
+            "active": 1,
+            "permission": 0,
+            "priority": 1
         }
     }
 }
