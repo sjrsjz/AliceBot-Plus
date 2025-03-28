@@ -225,14 +225,14 @@ async def chat_gemini(
     model = gai.GenerativeModel(
         model_name,
         system_instruction=prompts_package["template"].GEMINI_CHAT_INSTRUCTION,
-        generation_config=_generation_config,
+        generation_config=generation_config,
     )
     for i in range(5):
         try:
             response = await model.generate_content_async(
                 new_message,
                 safety_settings=_safety_settings,
-                generation_config=_generation_config,
+                generation_config=generation_config,
             )
             break
         except Exception as e:
