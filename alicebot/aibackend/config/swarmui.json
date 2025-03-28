@@ -1,6 +1,6 @@
 {
     "swarm_api_address": "http://192.168.31.39:7801",
-    "swarm_anime_model": "LumaAnimeMix Pro v3",
+    "swarm_anime_model": "LumaAnimeMix Pro v3.1",
     "swarm_photo_model": "text-to-image-photo",
     "swarm_default_model": "text-to-image",
     "swarm_anime_negative_prompt": "score_4,score_5,score_3,score_2,score_1,3D,realistic,monochrome,source_pony,source_furry,bad hands,low quality,distorted,worst quality,compression artifacts,artist name,watermark,duplicate,beginner,symmetrical,glitch,overexposed,text,extra fingers,missing fingers,fused fingers,bad-contrast,mutated legs,mutated hands,boring_sdxl_v1,zPDXLxxx-neg,NEGATIVE_HANDS,easynegative",

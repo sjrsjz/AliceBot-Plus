@@ -114,12 +114,12 @@ _safety_settings = {
 }
 
 _generation_config = {
-    "temperature": 0.7,
+    "temperature": 0.95,
     "top_p": 0.95,
     "top_k": 40,
     "max_output_tokens": 8192,
     "response_mime_type": "text/plain",
-    "frequency_penalty": 0.05,
+    "frequency_penalty": 0.5,
 }
 
 async def chat_gemini_direct(messages, system_instruction):
