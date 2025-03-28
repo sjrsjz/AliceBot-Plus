@@ -214,6 +214,14 @@ async def chat_gemini(
     else:
         new_message = gemini_messages.copy()
 
+    # 移除不支持的参数
+    generation_config = {k: v for k, v in _generation_config.items()}
+    if (
+        "frequency_penalty" in generation_config
+        and model_name == "gemini-2.0-flash-thinking-exp-01-21"
+    ):
+        del generation_config["frequency_penalty"]
+
     model = gai.GenerativeModel(
         model_name,
         system_instruction=prompts_package["template"].GEMINI_CHAT_INSTRUCTION,
