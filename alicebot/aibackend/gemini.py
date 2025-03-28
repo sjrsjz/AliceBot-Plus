@@ -169,20 +169,47 @@ async def chat_gemini(
         else "gemini-1.5-flash"
     )
 
+    # if tool_call_result:
+    #     results_part = []
+    #     model_response = tool_call_result["response"]
+    #     for fn_name, result in tool_call_result["result"].items():
+    #         results_part.append(
+    #             gai.protos.Part(
+    #                 function_response=gai.protos.FunctionResponse(
+    #                     name=fn_name, response={"result": result}
+    #                 )
+    #             )
+    #         )
+    #     new_message = gemini_messages.copy() + [
+    #         {"role": "model", "parts": model_response},
+    #         {"role": "user", "parts": results_part},
+    #     ]
+    # else:
+    #     new_message = gemini_messages.copy()
+
     if tool_call_result:
-        results_part = []
-        model_response = tool_call_result["response"]
+        # 将工具调用结果转换为纯文本格式
+        tool_response_text = "I called the following tools:\n\n"
+
+        # 添加模型原始回复
+        if isinstance(tool_call_result["response"], list):
+            for part in tool_call_result["response"]:
+                if hasattr(part, "text") and part.text:
+                    tool_response_text += part.text + "\n"
+        else:
+            tool_response_text += str(tool_call_result["response"]) + "\n"
+
+        # 添加每个工具的调用结果
+        tool_response_text += "\nTool call results:\n"
         for fn_name, result in tool_call_result["result"].items():
-            results_part.append(
-                gai.protos.Part(
-                    function_response=gai.protos.FunctionResponse(
-                        name=fn_name, response={"result": result}
-                    )
-                )
-            )
+            tool_response_text += f"\n--- Tool: {fn_name} ---\n"
+            tool_response_text += f"Result: {result}\n"
+            tool_response_text += f"--- End of {fn_name} result ---\n"
+
+        # 添加纯文本形式的工具调用结果
         new_message = gemini_messages.copy() + [
-            {"role": "model", "parts": model_response},
-            {"role": "user", "parts": results_part},
+            {"role": "model", "parts": "I need to use tools to answer this question."},
+            {"role": "user", "parts": tool_response_text},
         ]
     else:
         new_message = gemini_messages.copy()
