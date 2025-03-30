@@ -905,12 +905,6 @@ Powered by ✨Gemini-Flash-2.0
                             "content": real_request,
                         }
                     )
-                    group_context["context"].push_message(
-                        {
-                            "role": "assistant",
-                            "content": ai_response,
-                        }
-                    )
 
                     log_func(
                         "INFO",
@@ -949,6 +943,13 @@ Powered by ✨Gemini-Flash-2.0
                             ),
                         )
                         await asyncio.sleep(5)
+
+                    group_context["context"].push_message(
+                        {
+                            "role": "assistant",
+                            "content": ai_response,
+                        }
+                    )
             else:
 
                 group_context["stream_context"].push_message(

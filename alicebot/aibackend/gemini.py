@@ -189,7 +189,9 @@ async def chat_gemini(
 
     if tool_call_result:
         # 将工具调用结果转换为纯文本格式
-        tool_response_text = "I called the following tools:\n\n"
+        tool_response_text = (
+            "<|start_header|>think<|end_header|>I called the following tools:\n\n"
+        )
 
         # 添加模型原始回复
         if isinstance(tool_call_result["response"], list):
@@ -208,7 +210,7 @@ async def chat_gemini(
 
         # 添加纯文本形式的工具调用结果
         new_message = gemini_messages.copy() + [
-            {"role": "model", "parts": "I need to use tools to answer this question."},
+            {"role": "model", "parts": "<|start_header|>think<|end_header|>I need to use tools to answer this question."},
             {"role": "user", "parts": tool_response_text},
         ]
     else:
