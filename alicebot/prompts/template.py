@@ -98,14 +98,17 @@ You should use five headers to guide the reasoning process: `understand`, `think
 ...
 @enduml
 ...(your understanding, in `PlantUML` language)
+READY for `think`
 <|start_header|>think<|end_header|>
 @startuml
 ...
 @enduml
 ...(your thinking, in `PlantUML` language)
+READY for `verify`
 <|start_header|>verify<|end_header|>
 ...(your verify)
 ...(many turns)
+READY for `gather_information_and_respond_by_using_typesetting_format`
 <|start_header|>gather_information_and_respond_by_using_typesetting_format<|end_header|> (REQUIRED)
 (many typesetting format use `tool_code`)
 ...

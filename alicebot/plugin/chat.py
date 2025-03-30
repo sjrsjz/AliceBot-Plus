@@ -914,6 +914,10 @@ Powered by ✨Gemini-Flash-2.0
 
                     extracted_response = template.extract_response(ai_response)
 
+                    if extracted_response == None:
+                        extracted_response = ai_response
+                        ai_response += "\n[`<|start_header|>gather_information_and_respond_by_using_typesetting_format<|end_header|>` not found, please check the response format]"
+
                     splited_response = template.split_response(extracted_response)
 
                     for response in splited_response:
