@@ -35,7 +35,7 @@ async def image_to_text(image):
         gai.configure(api_key=package["apikey"].config.key_gemini())
         model = gai.GenerativeModel("gemini-1.5-flash")
         response = await model.generate_content_async(
-            ["Only output what the Image is", pi.open(io.BytesIO(image))]
+            ["# You are an image desciptor, Only output what the Image is, if the image contains TEXT, you should use Markdown to output the text", pi.open(io.BytesIO(image))]
         )
         log_func("INFO", "Gemini", "text: ", response.text)
         return response.text
