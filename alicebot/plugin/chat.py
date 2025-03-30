@@ -72,6 +72,9 @@ profile_path.mkdir(parents=True, exist_ok=True)
 # 导入该文件目录下的util/online_py_executor.py
 from plugin.util import online_py_executor
 
+# 导入该文件目录下的util/mathworld.py
+from plugin.util import mathworld
+
 
 def get_default_system_instruction():
     return example_prompt_package["Alice"].character
@@ -570,6 +573,23 @@ def get_available_tools():
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "search_on_mathworld",
+                "description": "Search on MathWorld and return the results.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "The content to search on MathWorld.",
+                        },
+                    },
+                    "required": ["query"],
+                },
+            },
+        }
     ]
 
 
@@ -620,6 +640,13 @@ async def handle_tools(tool_name, args):
             except Exception as e:
                 result_dict[file] = f"[System]Failed to read file '{file}': {e}"
         return result_dict
+    elif tool_name == "search_on_mathworld":
+        query = args["query"]
+        result = await mathworld.get_content_from_results(query, n=3)
+        if result:
+            return result
+        else:
+            return "No results found."
     else:
         return "Unknown or Invalid Tool: " + tool_name + " with args: " + str(args)
 
