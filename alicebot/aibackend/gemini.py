@@ -126,9 +126,9 @@ async def chat_gemini_direct(messages, system_instruction):
     messages = [
         {
             "role": "assistant",
-            "content": "My instruct is as follows:\n--- [Instructions] ---\n"
+            "content": "My instruct is as follows:\n--- [System Instructions] ---\n"
             + system_instruction
-            + "\n--- [Instructions End] ---",
+            + "\n--- [System Instructions End] ---",
         }
     ] + messages
     gemini_mseesages, _ = convert_to_gemini_messages(messages, None)
