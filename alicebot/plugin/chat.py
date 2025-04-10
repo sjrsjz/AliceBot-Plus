@@ -922,64 +922,100 @@ Powered by ✨Gemini-Flash-2.0
                     ),
                 )
 
-                await api.withdraw_message(message_id)
+                retry_count = 0
+                max_retries = 3
+                success = False
 
-                if ai_response != None:
+                group_context["context"].push_message(
+                    {
+                        "role": "user",
+                        "content": real_request,
+                    }
+                )
 
-                    group_context["context"].push_message(
-                        {
-                            "role": "user",
-                            "content": real_request,
-                        }
-                    )
+                while retry_count < max_retries and not success:
+                    if ai_response != None:
+                        log_func(
+                            "INFO",
+                            entity_name,
+                            f"Gemini AI Chat Plugin Response: {ai_response}",
+                        )
+
+                        extracted_response = template.extract_response(ai_response)
+
+                        if extracted_response == None:
+                            retry_count += 1
+                            log_func(
+                                "WARN",
+                                entity_name,
+                                f"Failed to extract response, retrying {retry_count}/{max_retries}..."
+                            )
+                            if retry_count < max_retries:
+                                # 重新尝试获取AI响应
+                                ai_response = await aibackend_package["gemini"].chat_gemini_with_tools(
+                                    ai_context,
+                                    get_available_tools(),
+                                    handle_tools,
+                                    template.COT_template(
+                                        example_typeset_package["QQBot"].typesets,
+                                        group_context["ai_params"]["system_instruction"],
+                                    ),
+                                )
+                            continue
+
+                        await api.withdraw_message(message_id)
+
+                        # 成功提取响应
+                        success = True
+                        splited_response = template.split_response(extracted_response)
+
+                        for response in splited_response:
+                            try:
+                                FUNCTION_HANDLERS = get_typeset_handler(
+                                    api, plugin_context.bot_entity.browser, template
+                                )
+                                processed_response = await template.process_chatbot_typeset(
+                                    response,
+                                    FUNCTION_HANDLERS,
+                                    markdown=False,
+                                    group_id=group_id,
+                                    _FUNCTION_HANDLERS=FUNCTION_HANDLERS,
+                                )
+                            except Exception as e:
+                                log_func(
+                                    "ERROR",
+                                    entity_name,
+                                    f"Failed to process chatbot typeset: {traceback.format_exc()}",
+                                )
+                                processed_response = response
+
+                            await api.send_group_message_separate_audio(
+                                group_id,
+                                await message_codec_package["codec"].decode_CQ_to_message(
+                                    processed_response
+                                ),
+                            )
+                            await asyncio.sleep(5)
+
+                        group_context["context"].push_message(
+                            {
+                                "role": "assistant",
+                                "content": ai_response,
+                            }
+                        )
+
+                # 如果所有重试都失败了，发送错误提示
+                if not success:
+                    await api.withdraw_message(message_id)
 
                     log_func(
-                        "INFO",
+                        "ERROR",
                         entity_name,
-                        f"Gemini AI Chat Plugin Response: {ai_response}",
+                        f"Failed to extract response after {max_retries} attempts"
                     )
-
-                    extracted_response = template.extract_response(ai_response)
-
-                    if extracted_response == None:
-                        extracted_response = ai_response
-                        ai_response += "\n[`<|start_header|>gather_information_and_respond_by_using_typesetting_format<|end_header|>` not found, please check the response format]"
-
-                    splited_response = template.split_response(extracted_response)
-
-                    for response in splited_response:
-                        try:
-                            FUNCTION_HANDLERS = get_typeset_handler(
-                                api, plugin_context.bot_entity.browser, template
-                            )
-                            processed_response = await template.process_chatbot_typeset(
-                                response,
-                                FUNCTION_HANDLERS,
-                                markdown=False,
-                                group_id=group_id,
-                                _FUNCTION_HANDLERS=FUNCTION_HANDLERS,
-                            )
-                        except Exception as e:
-                            log_func(
-                                "ERROR",
-                                entity_name,
-                                f"Failed to process chatbot typeset: {traceback.format_exc()}",
-                            )
-                            processed_response = response
-
-                        await api.send_group_message_separate_audio(
-                            group_id,
-                            await message_codec_package["codec"].decode_CQ_to_message(
-                                processed_response
-                            ),
-                        )
-                        await asyncio.sleep(5)
-
-                    group_context["context"].push_message(
-                        {
-                            "role": "assistant",
-                            "content": ai_response,
-                        }
+                    await api.send_group_message(
+                        group_id,
+                        f"无法解析AI响应，已尝试 {max_retries} 次。请稍后再试。"
                     )
             else:
 
