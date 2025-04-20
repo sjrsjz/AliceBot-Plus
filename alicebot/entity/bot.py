@@ -122,7 +122,7 @@ class Bot:
                     )
                     await asyncio.sleep(1)
                 return
-            if "ls":
+            if "ls" in command_json:
                 plugin_list = "All plugins:\n"
                 for plugin_name in self.plugin_package.get_all_modules().keys():
                     plugin_list += f"- {'[x]' if self.plugin_meta.get_plugin_status(plugin_name) == Bot.PluginStatus.ACTIVE else '[ ]'} {plugin_name}\n"
@@ -214,7 +214,7 @@ class Bot:
             raise Exception("#sudo command is invalid: " + command)
         except Exception as e:
             log_func("ERROR", "Bot", "Error in sudo command:", e)
-            await message_sender_func("Error in sudo command.")
+            await message_sender_func("Error in sudo command.\n" + str(e))
             raise e
 
     async def receive_group_message(

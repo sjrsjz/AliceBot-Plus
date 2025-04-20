@@ -798,7 +798,6 @@ Powered by ✨Gemini-Flash-2.0
             log_func("ERROR", "Bot", "Failed to execute command:", e)
             await message_sender_func(f"Failed to execute command.\n{e}")
             raise Exception("#sudo command is invalid: " + command)
-        raise plugin_context.SkipFollow()
 
     @staticmethod
     async def process_context_command(message, message_sender_func, context):
