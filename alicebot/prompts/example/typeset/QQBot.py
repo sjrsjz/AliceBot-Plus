@@ -35,7 +35,7 @@ typesets = [
     
     For matplotlib plots, only these libraries are available: `matplotlib.pyplot, numpy, math, random, time, datetime`
     
-    Important: Always ensure all opening tags have corresponding closing tags.""",
+    Important: Always ensure all opening tags have corresponding closing tags. Also, never use python's mutiline strings (triple quotes) in the `content` field.""",
         "args": {
             "content": "Quadratic integration example: <wolframalpha>integrate x^2</wolframalpha>"
         },
