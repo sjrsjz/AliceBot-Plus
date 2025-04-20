@@ -784,6 +784,7 @@ Powered by ✨Gemini-Flash-2.0
             if "set_trigger" in command_json:
                 group_context["ai_params"]["trigger"] = command_json["set_trigger"]
                 await message_sender_func("Set trigger successfully.")
+                raise plugin_context.SkipFollow()
             if "set_instruction" in command_json:
                 if command_json["set_instruction"] == []:
                     group_context["ai_params"][
@@ -794,6 +795,9 @@ Powered by ✨Gemini-Flash-2.0
                         "set_instruction"
                     ][0]
                 await message_sender_func("Set instruction successfully.")
+                raise plugin_context.SkipFollow()
+        except plugin_context.SkipFollow:
+            raise plugin_context.SkipFollow()
         except Exception as e:
             log_func("ERROR", "Bot", "Failed to execute command:", e)
             await message_sender_func(f"Failed to execute command.\n{e}")
