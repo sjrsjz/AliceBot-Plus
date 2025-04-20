@@ -283,12 +283,12 @@ class ContextManager:
         if stream_context:
             stream_context_str = ""
             for item in stream_context.get_message():
-                stream_context_str += f"""# [{item['role']}: {item['name']}]([CQ:at,qq={item['user_id']}], {item['time']}, [CQ:reply,id={item['message_id']}]):\n{item['content']}\n\n"""
+                stream_context_str += f"""# [{item['role']} [CQ:at,qq={item['user_id']}], name: {item['name']}]({item['time']}, msgid: [CQ:reply,id={item['message_id']}]):\n{item['content']}\n\n"""
             _context.insert(
                 0,
                 {
                     "role": "user",
-                    "content": f"# Additional Group Message History Context (Multi-Users):\n{stream_context_str}",
+                    "content": f"# Group Message History Context (Multi-Users, Important):\n{stream_context_str}",
                 },
             )
 
@@ -589,7 +589,7 @@ def get_available_tools():
                     "required": ["query"],
                 },
             },
-        }
+        },
     ]
 
 
@@ -597,11 +597,14 @@ async def handle_tools(tool_name, args):
     log_func("INFO", entity_name, f"Tool: {tool_name} with args: {args}")
     if tool_name == "search_on_web":
         return await document_renderer_package["renderer"].web_search(
-            plugin_context.bot_entity.browser, args["query"], 20, "Bing"
+            await plugin_context.bot_entity.browser.get_browser(),
+            args["query"],
+            20,
+            "Bing",
         )
     elif tool_name == "get_webpage_from_url":
         return await document_renderer_package["renderer"].get_webpage(
-            plugin_context.bot_entity.browser,
+            await plugin_context.bot_entity.browser.get_browser(),
             args["webpage"],
             only_text=True,
             max_token=4096,
@@ -948,17 +951,21 @@ Powered by ✨Gemini-Flash-2.0
                             log_func(
                                 "WARN",
                                 entity_name,
-                                f"Failed to extract response, retrying {retry_count}/{max_retries}..."
+                                f"Failed to extract response, retrying {retry_count}/{max_retries}...",
                             )
                             if retry_count < max_retries:
                                 # 重新尝试获取AI响应
-                                ai_response = await aibackend_package["gemini"].chat_gemini_with_tools(
+                                ai_response = await aibackend_package[
+                                    "gemini"
+                                ].chat_gemini_with_tools(
                                     ai_context,
                                     get_available_tools(),
                                     handle_tools,
                                     template.COT_template(
                                         example_typeset_package["QQBot"].typesets,
-                                        group_context["ai_params"]["system_instruction"],
+                                        group_context["ai_params"][
+                                            "system_instruction"
+                                        ],
                                     ),
                                 )
                             continue
@@ -972,14 +979,18 @@ Powered by ✨Gemini-Flash-2.0
                         for response in splited_response:
                             try:
                                 FUNCTION_HANDLERS = get_typeset_handler(
-                                    api, plugin_context.bot_entity.browser, template
+                                    api,
+                                    await plugin_context.bot_entity.browser.get_browser(),
+                                    template,
                                 )
-                                processed_response = await template.process_chatbot_typeset(
-                                    response,
-                                    FUNCTION_HANDLERS,
-                                    markdown=False,
-                                    group_id=group_id,
-                                    _FUNCTION_HANDLERS=FUNCTION_HANDLERS,
+                                processed_response = (
+                                    await template.process_chatbot_typeset(
+                                        response,
+                                        FUNCTION_HANDLERS,
+                                        markdown=False,
+                                        group_id=group_id,
+                                        _FUNCTION_HANDLERS=FUNCTION_HANDLERS,
+                                    )
                                 )
                             except Exception as e:
                                 log_func(
@@ -991,9 +1002,9 @@ Powered by ✨Gemini-Flash-2.0
 
                             await api.send_group_message_separate_audio(
                                 group_id,
-                                await message_codec_package["codec"].decode_CQ_to_message(
-                                    processed_response
-                                ),
+                                await message_codec_package[
+                                    "codec"
+                                ].decode_CQ_to_message(processed_response),
                             )
                             await asyncio.sleep(5)
 
@@ -1011,11 +1022,11 @@ Powered by ✨Gemini-Flash-2.0
                     log_func(
                         "ERROR",
                         entity_name,
-                        f"Failed to extract response after {max_retries} attempts"
+                        f"Failed to extract response after {max_retries} attempts",
                     )
                     await api.send_group_message(
                         group_id,
-                        f"无法解析AI响应，已尝试 {max_retries} 次。请稍后再试。"
+                        f"无法解析AI响应，已尝试 {max_retries} 次。请稍后再试。",
                     )
             else:
 

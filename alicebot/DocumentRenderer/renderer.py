@@ -1,12 +1,9 @@
-import markdown.util
 import requests
 import traceback
 import asyncio
 import re
-import os
 import sys
 import asyncio
-from pyppeteer import launch
 from bs4 import BeautifulSoup
 import tiktoken
 import markdown
@@ -35,31 +32,6 @@ latex = package.load_module("latex", log_func=log_func)
 wolfram_alpha = package.load_module("wolfram_alpha", log_func=log_func)
 typst_render = package.load_module("typst_render", log_func=log_func)
 safe_python_executor = package.load_module("safe_python_executor", log_func=log_func)
-
-
-async def setup_browser(browser_path):
-    try:
-        cache_dir = "./.pyppeteer"
-        if not os.path.exists(cache_dir):
-            os.makedirs(cache_dir)
-        if sys.platform.startswith("linux"):
-            browser = await launch(
-                headless=True,
-                executablePath=browser_path,
-                dumpio=True,
-                args=["--no-sandbox", "--disable-setuid-sandbox"],
-                userDataDir=cache_dir,
-            )
-            return browser
-        else:
-            browser = await launch(headless=True, dumpio=True, userDataDir=cache_dir)
-        return browser
-    except Exception as e:
-        log_func('ERROR', 'WebSearch', "Chrome not found, using Edge instead")
-        edge_path = os.environ.get("EDGE_PATH", browser_path)
-        browser = await launch(headless=True, executablePath=edge_path)
-        return browser
-
 
 async def bing_search(browser, query: str, max_results: int = 3):
     page = None
@@ -940,67 +912,3 @@ def MarkdownRenderer(browser):
         return img
 
     return render
-
-
-async def __test__():
-    browser = await setup_browser()
-    markdown_text = """
-🥵
-
- <typst>$ integral x^2 $</typst>
-
-<latex>$\\int x^2 dx$</latex>
-
-| Tables        | Are           | Cool  |
-| ------------- |:-------------:| -----:|
-| col 3 is      | right-aligned | 1600 |
-| col 2 is      | centered      |   12 |
-| zebra stripes | are neat      |    1 |
-
-<font=Arial>Font Test\n</font>
-
-<font=Times New Roman>Font Test\n</font>
-
-<font=Comic Sans MS>Font Test\n</font>
-
-<font=Georgia>Font Test\n</font>
-
-# Heading 1
-
-## Heading 2
-
-### Heading 3
-
-#### Heading 4
-
-##### Heading 5
-
-###### Heading 6
-
-**Bold Text**
-
-*Italic Text*
-
-~~Strikethrough Text~~
-
-++Underline Text++
-
-<ins>Inserted Text</ins>
-
-<sub>Subscript Text</sub>
-
-<sup>Superscript Text</sup>
-
-<mark>Marked Text</mark>
-
-<u>Underline Text</u>
-
-<small>Small Text</small>
-
-"""
-
-    img = await MarkdownRenderer(browser)(markdown_text)
-    with open("output.png", "wb") as f:
-        f.write(img)
-    print("Markdown rendered to output.png")
-    await browser.close()

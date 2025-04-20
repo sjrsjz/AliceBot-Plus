@@ -38,7 +38,9 @@ document_renderer_package = moduleloader.ModuleLoader(
 document_renderer = document_renderer_package.load_module(
     "renderer", hot_reload=True, log_func=log_func
 )
-
+browser_manager = document_renderer_package.load_module(
+    "browser_manager", hot_reload=True, log_func=log_func
+)
 
 from util.timeout import timeout
 from util.ratelimit import ratelimit, async_ratelimit, RateLimitedError, RateLimiter
@@ -126,6 +128,15 @@ class Bot:
                     plugin_list += f"- {'[x]' if self.plugin_meta.get_plugin_status(plugin_name) == Bot.PluginStatus.ACTIVE else '[ ]'} {plugin_name}\n"
                 await message_sender_func(plugin_list.strip())
                 return
+            if "reload" in command_json:
+                plugin_names = command_json["reload"]
+                for plugin_name in plugin_names:
+                    if plugin_name not in self.plugin_package.get_all_modules():
+                        await message_sender_func(f"Plugin {plugin_name} not found.")
+                        continue
+                    self.plugin_package.reload_module(plugin_name)
+                    await message_sender_func(f"Plugin {plugin_name} reloaded.")
+                return
             await message_sender_func("Unknown command.")
             raise Exception("#plugin command is invalid: " + command)
         except Exception as e:
@@ -160,6 +171,7 @@ class Bot:
 
         try:
             command_json = fjson.decode(command)  # 解析json
+            log_func("DEBUG", "Bot", "Parsed command JSON:", command_json)
         except Exception as e:
             log_func("ERROR", "Bot", "Failed to parse command:", e)
             await message_sender_func("Failed to parse command.")
@@ -179,6 +191,23 @@ class Bot:
                         self.plugin_meta.deactivate_plugin(plugin_name)
                         log_text += f"Disabled plugin: {plugin_name}\n"
                 await message_sender_func(log_text.strip())
+                return
+            
+            if "restart" in command_json:
+                log_text = ""
+                if "browser" in command_json["restart"]:
+                    log_func("INFO", "Bot", "Restarting browser...")
+                    await self.browser.close_browser()
+                    if await self.browser.start_browser():
+                        log_func("INFO", "Bot", "Headless browser restarted.")
+                        await self.browser.connect()
+                        log_text += "Headless browser restarted.\n"
+                        await message_sender_func("Headless browser restarted.")
+                    else:
+                        log_func("ERROR", "Bot", "Failed to restart headless browser.")
+                        await message_sender_func("Failed to restart headless browser.")
+                        log_text += "Failed to restart headless browser.\n"
+                    log_text += "Browser restarted.\n"
                 return
 
             await message_sender_func("Unknown command.")
@@ -491,7 +520,17 @@ class Bot:
         self.admins = self.bot_config.admins
 
         log_func("INFO", "Bot", "Initializing headless browser...")
-        self.browser = await document_renderer_package["renderer"].setup_browser(self.bot_config.browser_path)
+        self.browser = document_renderer_package[
+            "browser_manager"
+        ].BrowserManager(self.bot_config.browser_path)
+
+        if await self.browser.start_browser():
+            log_func("INFO", "Bot", "Headless browser started.")
+            await self.browser.connect()
+        else:
+            log_func("ERROR", "Bot", "Failed to start headless browser. Any operations requiring a browser will not work.")
+            log_func("INFO", "Bot", "Headless browser not started.")
+        
         log_func("INFO", "Bot", "Headless browser initialized.")
 
         log_func("INFO", "Bot", "Bot entity created.")
@@ -508,11 +547,12 @@ class Bot:
 
         log_func("INFO", "Bot", "Closing headless browser...")
         if hasattr(self, "browser") and self.browser:
-            for page in await self.browser.pages():
-                await page.close()
-            await self.browser.close()
+            instance = await self.browser.get_browser(auto_reconnect = False)
+            if instance:
+                for page in instance.pages():
+                    await page.close()
+            await self.browser.close_browser()
             # 等待一小段时间确保进程完全关闭
-            await asyncio.sleep(0.5)
         log_func("INFO", "Bot", "Headless browser closed.")
 
         self.plugin_package = None

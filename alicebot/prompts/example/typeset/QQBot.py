@@ -9,8 +9,8 @@ typesets = [
     - Body parts (wet pussy, big boobs, erect nipples, etc.)
     - Clothing (dress, etc.)
     - ...(Include as many descriptive tags as possible to ensure clarity and specificity. Always in **English**!!!)
-    - `vertical` is a boolean value, if `true`, the image will be vertical, otherwise, it will be horizontal""",
-        "args": {"prompt": "a girl is playing with a dog", "vertical": False},
+    - `vertical` is a boolean value, if `true`, the image will be vertical, otherwise, it will be horizontal, usually you should set it to `true` if the image is a character, and `false` if the image is landscape""",
+        "args": {"prompt": "a girl is standing under a tree", "vertical": True},
     },
     {
         "name": "display_wolframalpha",

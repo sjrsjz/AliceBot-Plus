@@ -116,7 +116,11 @@ class Plugin:
                 try:
                     result = await document_renderer_package[
                         "renderer"
-                    ].MarkdownRenderer(plugin_context.bot_entity.browser)(markdown)
+                    ].MarkdownRenderer(
+                        await plugin_context.bot_entity.browser.get_browser()
+                    )(
+                        markdown
+                    )
                 except Exception as e:
                     await api.send_group_message(
                         message["group_id"], f"Failed to render markdown:\n{str(e)}"
@@ -198,7 +202,7 @@ class Plugin:
 
                         def input_func(args):
                             return String(input_reader())
-                        
+
                         context["context"].get("print").func = print_func
                         context["context"].get("input").func = input_func
 
