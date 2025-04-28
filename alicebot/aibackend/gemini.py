@@ -339,9 +339,13 @@ async def chat_gemini_with_tools(
         for tool_call in tool_calls:
             tool_name = tool_call.name
             tool_params = tool_call.args
-            tool_result["result"][tool_name] = await tool_call_processor(
-                tool_name, tool_params
-            )
+            try:
+                tool_result["result"][tool_name] = await tool_call_processor(
+                    tool_name, tool_params
+                )
+            except Exception as e:
+                log_func("ERROR", "Gemini", f"Error calling tool {tool_name}: {e}")
+                tool_result["result"][tool_name] = f"Failed to call tool: {e}"
 
         model_response = await chat_gemini(
             messages_original, system_instruction, fallback_1_5, tool_result
