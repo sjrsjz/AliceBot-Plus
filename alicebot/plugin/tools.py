@@ -2,7 +2,10 @@ import base64
 from typing import Callable, Any
 
 import asyncio
-from xlang import XLang, Context, NoneType, String
+# from xlang import XLang, Context, NoneType, String
+from xlang import GCSystem, wrap_py_function, VMNull
+
+
 import pathlib
 
 log_func: Callable[[Any], None]
@@ -40,31 +43,68 @@ tools_help = r"""
 """
 
 
+# class XLangContexts:
+#     def __init__(self):
+#         self.contexts = {}
+
+#     def get_context(self, group_id):
+#         if group_id not in self.contexts:
+#             self.contexts[group_id] = {
+#                 "context": Context(),
+#                 "stack": [],
+#                 "interpreter": XLang(),
+#             }
+#             self.contexts[group_id]["context"].new_frame(
+#                 stack=self.contexts[group_id]["stack"], enter_func=True, hidden = True
+#             )
+#             self.contexts[group_id]["interpreter"].create_builtins_for_context(
+#                 self.contexts[group_id]["context"]
+#             )
+#             self.contexts[group_id]["context"].new_frame(
+#                 stack=self.contexts[group_id]["stack"], enter_func=True
+#             )
+#             log_func(f"XLang context created for group {group_id}")
+#         return self.contexts[group_id]
+
+#     def remove_context(self, group_id):
+#         if group_id in self.contexts:
+#             del self.contexts[group_id]
+
+
 class XLangContexts:
     def __init__(self):
         self.contexts = {}
 
     def get_context(self, group_id):
         if group_id not in self.contexts:
+            gc = GCSystem()
+            py_context = {}
+
+            def xlang_set(**kwargs):
+                py_context.update(kwargs)
+
+            def xlang_get():
+                return gc.new_tuple([gc.new_named(k, v) for k, v in py_context.items()])
+
+            wrapped_set = wrap_py_function(gc, xlang_set)
+            wrapped_get = wrap_py_function(gc, xlang_get)
+
             self.contexts[group_id] = {
-                "context": Context(),
-                "stack": [],
-                "interpreter": XLang(),
+                "gc": gc,
+                "py_context": py_context,
+                "wrapped_set": wrapped_set,
+                "wrapped_get": wrapped_get,
             }
-            self.contexts[group_id]["context"].new_frame(
-                stack=self.contexts[group_id]["stack"], enter_func=True, hidden = True
-            )
-            self.contexts[group_id]["interpreter"].create_builtins_for_context(
-                self.contexts[group_id]["context"]
-            )
-            self.contexts[group_id]["context"].new_frame(
-                stack=self.contexts[group_id]["stack"], enter_func=True
-            )
-            log_func(f"XLang context created for group {group_id}")
+            log_func(f"XLang-Py context created for group {group_id}")
         return self.contexts[group_id]
 
     def remove_context(self, group_id):
         if group_id in self.contexts:
+            context = self.contexts[group_id]
+            del context["wrapped_set"]
+            del context["wrapped_get"]
+            del context["py_context"]
+            context["gc"].collect()
             del self.contexts[group_id]
 
 
@@ -172,86 +212,62 @@ class Plugin:
                     )
                 raise plugin_context.SkipFollow()
 
-            xlang_trigger = "$"
-            if encoded_message.startswith(xlang_trigger):
-                xlang = encoded_message[len(xlang_trigger):]
-                if xlang.strip() == "clear()":
+            xlang_py_trigger = "$"
+            if encoded_message.startswith(xlang_py_trigger):
+                xlang_code = encoded_message[len(xlang_py_trigger) :]
+                if xlang_code.strip() == "clear()":
                     Plugin.xlang_contexts.remove_context(message["group_id"])
                     await api.send_group_message(
-                        message["group_id"], "XLang context cleared!"
+                        message["group_id"], "XLang-Py context cleared!"
                     )
                     raise plugin_context.SkipFollow()
                 try:
 
                     def execute():
                         context = Plugin.xlang_contexts.get_context(message["group_id"])
+                        gc = context["gc"]
 
-                        output_buffer = ""
-                        error_buffer = ""
                         is_error = False
 
-                        def safe_open(path, *args, **kwargs):
-                            if ".." in path:
-                                raise FileNotFoundError("Invalid path")
-                            return open(xlang_modules_path / path, *args, **kwargs)
-
-                        def print_func(args):
-                            list_args = [arg.value for arg in args]
-                            output_printer(*list_args)
-                            return NoneType()
-
-                        def input_func(args):
-                            return String(input_reader())
-
-                        context["context"].get("print").func = print_func
-                        context["context"].get("input").func = input_func
-
-                        def output_printer(*args, sep=" ", end="\n"):
-                            nonlocal output_buffer
-                            output_buffer += sep.join(map(str, args)) + end
-
-                        def input_reader(*args):
-                            return ""
-
-                        def error_printer(*args, sep=" ", end="\n"):
-                            nonlocal error_buffer
-                            error_buffer += sep.join(map(str, args)) + end
-                            nonlocal is_error
-                            is_error = True
-
-                        result = NoneType()
+                        xlang_lambda = gc.new_lambda()
 
                         try:
-                            result = context["interpreter"].execute_with_context(
-                                xlang,
-                                context["context"],
-                                context["stack"],
-                                error_printer=error_printer,
-                                output_printer=output_printer,
-                                input_reader=input_reader,
-                                open_func=safe_open,
+                            xlang_lambda.load(
+                                code=xlang_code,
+                                default_args=gc.new_tuple(
+                                    [
+                                        gc.new_named("let", context["wrapped_set"]),
+                                        gc.new_named("context", context["wrapped_get"]),
+                                    ]
+                                ),
                             )
+                            result = xlang_lambda()
+                            if not isinstance(result, [None, VMNull]):
+                                output = str(result)
                         except Exception as e:
-                            error_printer(str(e))
+                            error += str(e) + "\n"
                             is_error = True
                         finally:
-                            if not isinstance(result, NoneType):
-                                output_printer(str(result))
+                            # 确保释放 lambda 对象
+                            del xlang_lambda
+                            gc.collect()
 
                         return {
-                            "output": output_buffer,
-                            "error": error_buffer,
+                            "output": output,
+                            "error": error,
                             "is_error": is_error,
                         }
 
-                    async def xlang_timeout_callback():
+                    async def xlang_py_timeout_callback():
                         await api.send_group_message(
-                            message["group_id"], "XLang execution timeout!"
+                            message["group_id"], "XLang-Py execution timeout!"
                         )
 
-                    @plugin_context.timeout(10, timeout_callback=xlang_timeout_callback)
-                    async def run_xlang():
-                        # 创建一个任务在线程池中执行 XLang 代码
+                    @plugin_context.timeout(
+                        10, timeout_callback=xlang_py_timeout_callback
+                    )
+                    async def run_xlang_py():
+                        # 创建一个任务在线程池中执行 XLang-Py 代码
                         loop = asyncio.get_event_loop()
                         result = await loop.run_in_executor(None, execute)
 
@@ -270,13 +286,120 @@ class Plugin:
                                     message["group_id"], f"{result['output']}".strip()
                                 )
 
-                    await run_xlang()
+                    await run_xlang_py()
 
                 except Exception as e:
                     await api.send_group_message(
-                        message["group_id"], f"Failed to run xlang:\n{str(e)}"
+                        message["group_id"], f"Failed to run xlang-py:\n{str(e)}"
                     )
                     raise plugin_context.SkipFollow()
                 raise plugin_context.SkipFollow()
+
+            # xlang_trigger = "$"
+            # if encoded_message.startswith(xlang_trigger):
+            #     xlang = encoded_message[len(xlang_trigger):]
+            #     if xlang.strip() == "clear()":
+            #         Plugin.xlang_contexts.remove_context(message["group_id"])
+            #         await api.send_group_message(
+            #             message["group_id"], "XLang context cleared!"
+            #         )
+            #         raise plugin_context.SkipFollow()
+            #     try:
+
+            #         def execute():
+            #             context = Plugin.xlang_contexts.get_context(message["group_id"])
+
+            #             output_buffer = ""
+            #             error_buffer = ""
+            #             is_error = False
+
+            #             def safe_open(path, *args, **kwargs):
+            #                 if ".." in path:
+            #                     raise FileNotFoundError("Invalid path")
+            #                 return open(xlang_modules_path / path, *args, **kwargs)
+
+            #             def print_func(args):
+            #                 list_args = [arg.value for arg in args]
+            #                 output_printer(*list_args)
+            #                 return NoneType()
+
+            #             def input_func(args):
+            #                 return String(input_reader())
+
+            #             context["context"].get("print").func = print_func
+            #             context["context"].get("input").func = input_func
+
+            #             def output_printer(*args, sep=" ", end="\n"):
+            #                 nonlocal output_buffer
+            #                 output_buffer += sep.join(map(str, args)) + end
+
+            #             def input_reader(*args):
+            #                 return ""
+
+            #             def error_printer(*args, sep=" ", end="\n"):
+            #                 nonlocal error_buffer
+            #                 error_buffer += sep.join(map(str, args)) + end
+            #                 nonlocal is_error
+            #                 is_error = True
+
+            #             result = NoneType()
+
+            #             try:
+            #                 result = context["interpreter"].execute_with_context(
+            #                     xlang,
+            #                     context["context"],
+            #                     context["stack"],
+            #                     error_printer=error_printer,
+            #                     output_printer=output_printer,
+            #                     input_reader=input_reader,
+            #                     open_func=safe_open,
+            #                 )
+            #             except Exception as e:
+            #                 error_printer(str(e))
+            #                 is_error = True
+            #             finally:
+            #                 if not isinstance(result, NoneType):
+            #                     output_printer(str(result))
+
+            #             return {
+            #                 "output": output_buffer,
+            #                 "error": error_buffer,
+            #                 "is_error": is_error,
+            #             }
+
+            #         async def xlang_timeout_callback():
+            #             await api.send_group_message(
+            #                 message["group_id"], "XLang execution timeout!"
+            #             )
+
+            #         @plugin_context.timeout(10, timeout_callback=xlang_timeout_callback)
+            #         async def run_xlang():
+            #             # 创建一个任务在线程池中执行 XLang 代码
+            #             loop = asyncio.get_event_loop()
+            #             result = await loop.run_in_executor(None, execute)
+
+            #             if result["is_error"]:
+            #                 await api.send_group_message(
+            #                     message["group_id"],
+            #                     f"{result['error']}\nOutput:\n{result['output']}".strip(),
+            #                 )
+            #             else:
+            #                 if result["output"] == "":
+            #                     await api.send_group_message(
+            #                         message["group_id"], "Success!"
+            #                     )
+            #                 else:
+            #                     await api.send_group_message(
+            #                         message["group_id"], f"{result['output']}".strip()
+            #                     )
+
+            #         await run_xlang()
+
+            #     except Exception as e:
+            #         await api.send_group_message(
+            #             message["group_id"], f"Failed to run xlang:\n{str(e)}"
+            #         )
+            #         raise plugin_context.SkipFollow()
+            #     raise plugin_context.SkipFollow()
 
         await handler()

@@ -26,4 +26,6 @@ rich
 
 psutil
 
-xlang-script
+# xlang-script
+
+git+https://github.com/sjrsjz/xlang-py.git
