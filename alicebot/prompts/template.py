@@ -20,6 +20,8 @@ GEMINI_TEMPLATE = f"""<|start_header|>system_alert<|end_header|>
 
 # Remeber, all the typesetting format should be written after `<|start_header|>gather_information_and_respond_by_using_typesetting_format<|end_header|>` to apply them, otherwise they will be treated as normal text and invisible to the user.
 
+# NEVER use invalid typesetting format in your respond!!, **only the tools listed BEFORE are valid typesetting format**
+
 You can generate your own content freely by using typesetting format, **e.g., generate images, sending audio, chat with users, render Markdown, just use one of them or combine them.**
 
 <|start_header|>character<|end_header|>
