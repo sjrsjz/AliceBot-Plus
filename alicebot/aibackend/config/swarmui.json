@@ -1,5 +1,5 @@
 {
-    "swarm_api_address": "http://192.168.31.39:7801",
+    "swarm_api_address": "http://192.168.31.40:7801",
     "swarm_anime_model": "LumaAnimeMix Pro v3.1",
     "swarm_photo_model": "text-to-image-photo",
     "swarm_default_model": "text-to-image",

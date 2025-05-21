@@ -115,6 +115,67 @@ class XLangContexts:
             del self.contexts[group_id]
 
 
+xlang_header = """
+@required context;
+@required let;
+@required clear;
+
+iter := builtin::(container?, wrapper?) -> if (container == null or wrapper == null) {
+    return () -> false;
+} else {
+    return (container!, wrapper!, n => 0) -> {
+        if (n >= lengthof container) {
+            return false;
+        };
+        wrapper = container[n];
+        n = n + 1;
+        return true;
+    };
+};
+
+lazy_value := builtin::(expensive_computation?) -> {
+    if (valueof expensive_computation == null) {
+        expensive_computation()
+    } else {
+        valueof expensive_computation
+    }
+};
+
+Z := builtin::(f?) -> {
+    g := (x?) -> f((y?) -> x(x)(y));
+    return g(g);
+};
+
+stringify := builtin::(x?) -> ("%s" % (x,));
+
+repr := builtin::(x?) -> ("%r" % (x,));
+
+join_str := builtin::(tuple?, sep => ", ") -> {
+    i := 0;
+    result := "";
+    while (i < lengthof tuple) {
+        result = result + stringify(tuple[i]);
+        i = i + 1;
+        if (i < lengthof tuple) {
+            result = result + stringify(sep);
+        }
+    };
+    return result;
+};
+
+printable := builtin::(f?)->{
+    buffer := "";
+    print := (v?) -> {
+        buffer = buffer + stringify(v) + "\n";
+    };
+    result := f(print!);
+
+    return if (result == null) buffer else {
+        "%s\n%s" % (buffer, result)
+    }
+};
+"""
+
 class Plugin:
 
     xlang_contexts = XLangContexts()
@@ -246,12 +307,9 @@ class Plugin:
 
                         try:
                             xlang_lambda.load(
-                                code=f"""
-                                    @required context;
-                                    @required let;
-                                    @required clear;
-                                    {xlang_code}
-                                    """,
+                                code=xlang_header + f"""printable((print?)->{{
+{xlang_code}
+                                }})""",
                                 default_args=gc.new_tuple(
                                     [
                                         gc.new_named("let", context["wrapped_set"]),
