@@ -175,7 +175,7 @@ async def chat_gemini(
     gemini_messages, _ = convert_to_gemini_messages(messages, None)
     gai.configure(api_key=package["apikey"].config.key_gemini())
 
-    model_name = "gemini-2.0-flash" if not fallback_1_5 else "gemini-1.5-flash"
+    model_name = "gemini-2.5-flash-preview-05-20" if not fallback_1_5 else "gemini-1.5-flash"
 
     if tool_call_result:
         results_part = []
@@ -277,13 +277,13 @@ async def chat_gemini_tool_call(
     gemini_messages, tools = convert_to_gemini_messages(messages, tools)
 
     model_name = (
-        "gemini-2.5-flash-preview-05-20" if not fallback_1_5 else "gemini-1.5-flash"
+        "gemini-2.0-flash" if not fallback_1_5 else "gemini-1.5-flash"
     )
     log_func("DEBUG", "Gemini", f"Using model: {model_name}")
 
     gai.configure(api_key=package["apikey"].config.key_gemini())
     model = gai.GenerativeModel(
-        "gemini-2.5-flash-preview-05-20",
+        "gemini-2.0-flash",
         system_instruction=prompts_package["template"].GEMINI_TOOL_CALL_INSTRUCTION
         % (original_tools, formatted_tool_names),
         tools=tools,
