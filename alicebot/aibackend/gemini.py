@@ -175,7 +175,7 @@ async def chat_gemini(
     gemini_messages, _ = convert_to_gemini_messages(messages, None)
     gai.configure(api_key=package["apikey"].config.key_gemini())
 
-    model_name = "gemini-2.5-flash-preview-05-20" if not fallback_1_5 else "gemini-1.5-flash"
+    model_name = "gemini-2.5-flash" if not fallback_1_5 else "gemini-1.5-flash"
 
     if tool_call_result:
         results_part = []

@@ -284,7 +284,7 @@ class ContextManager:
         if stream_context:
             stream_context_str = ""
             for item in stream_context.get_message():
-                stream_context_str += f"""# [{item['role']} [CQ:at,qq={item['user_id']}], name: {item['name']}]({item['time']}, msgid: [CQ:reply,id={item['message_id']}]):\n{item['content']}\n\n"""
+                stream_context_str += f"""# [{item['role']} [CQ:at,qq={item['user_id']}], name: {item['name']}]({item['time']}, msgid: [CQ:reply,id={item['message_id']}]):\n{item['content']}\n\n---\n\n"""
             _context.insert(
                 0,
                 {
