@@ -6,6 +6,7 @@ regex
 markdown
 typst
 beautifulsoup4
+lxml
 
 numpy
 matplotlib
@@ -27,5 +28,6 @@ rich
 psutil
 
 # xlang-script
+autogemini
 
 git+https://github.com/sjrsjz/xlang-py.git

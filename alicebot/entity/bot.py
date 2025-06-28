@@ -549,7 +549,7 @@ class Bot:
         if hasattr(self, "browser") and self.browser:
             instance = await self.browser.get_browser(auto_reconnect = False)
             if instance:
-                for page in instance.pages():
+                for page in await instance.pages():
                     await page.close()
             await self.browser.close_browser()
             # 等待一小段时间确保进程完全关闭
