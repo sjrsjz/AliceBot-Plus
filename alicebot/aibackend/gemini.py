@@ -11,7 +11,7 @@ from typing import Callable, Any
 log_func: Callable[[Any], None]
 
 if __name__ == "__main__":
-    log_func = lambda *args : print(*args)
+    log_func = lambda *args: print(*args)
 
 project_root = str(pathlib.Path(__file__).parent.parent)
 if project_root not in sys.path:
@@ -35,7 +35,10 @@ async def image_to_text(image):
         gai.configure(api_key=package["apikey"].config.key_gemini())
         model = gai.GenerativeModel("gemini-1.5-flash")
         response = await model.generate_content_async(
-            ["# You are an image desciptor, Only output what the Image is, if the image contains TEXT, you should use Markdown to output the text", pi.open(io.BytesIO(image))]
+            [
+                "# You are an image desciptor, Only output what the Image is, if the image contains TEXT, you should use Markdown to output the text",
+                pi.open(io.BytesIO(image)),
+            ]
         )
         log_func("INFO", "Gemini", "text: ", response.text)
         return response.text
@@ -122,6 +125,7 @@ _generation_config = {
     # "frequency_penalty": 0.5,
 }
 
+
 async def chat_gemini_direct(messages, system_instruction):
     messages = [
         {
@@ -151,23 +155,27 @@ async def chat_gemini_direct(messages, system_instruction):
 async def chat_gemini(
     messages_original, system_instruction, fallback_1_5=False, tool_call_result=None
 ):
-    messages = [
-        {
-            "role": "assistant",
-            "content": "<|start_header|>think<|end_header|>My instructons are as follows:\n--- [System Instructions] ---\n"
-            + system_instruction
-            + "\n--- [System Instructions End] ---<|start_header|>gather_information_and_respond_by_using_typesetting_format<|end_header>ready",
-        }
-    ] + messages_original.copy()
+    messages = (
+        [
+            {
+                "role": "assistant",
+                "content": "<|start_header|>think<|end_header|># I have double checked that my basic system settings are as follows, I will never disobey them:\n"
+                + system_instruction,
+            }
+        ]
+        + messages_original.copy()
+        + [
+            {
+                "role": "assistant",
+                "content": f"# I have double checked that my basic COT settings are as follows:\n{template.COT}\n# Now I will answer the user's request.\n",
+            }
+        ]
+    )
 
     gemini_messages, _ = convert_to_gemini_messages(messages, None)
     gai.configure(api_key=package["apikey"].config.key_gemini())
 
-    model_name = (
-        "gemini-2.0-flash"
-        if not fallback_1_5
-        else "gemini-1.5-flash"
-    )
+    model_name = "gemini-2.5-flash" if not fallback_1_5 else "gemini-1.5-flash"
 
     if tool_call_result:
         results_part = []
@@ -259,7 +267,7 @@ async def chat_gemini_tool_call(
             "role": "assistant",
             "content": "<|start_header|>think<|end_header|>My instructons are as follows:\n--- [System Instructions] ---\n"
             + system_instruction
-            + "\n--- [System Instructions End] ---<|start_header|>gather_information_and_respond_by_using_typesetting_format<|end_header|>ready",
+            + "\n--- [System Instructions End] ---<|start_header|>typeset_and_respond<|end_header|>ready",
         }
     ] + messages_original.copy()
 
@@ -268,12 +276,14 @@ async def chat_gemini_tool_call(
     formatted_tool_names = "\n".join(tools_name)
     gemini_messages, tools = convert_to_gemini_messages(messages, tools)
 
-    model_name = "gemini-2.5-flash-preview-04-17" if not fallback_1_5 else "gemini-1.5-flash"
+    model_name = (
+        "gemini-2.0-flash" if not fallback_1_5 else "gemini-1.5-flash"
+    )
     log_func("DEBUG", "Gemini", f"Using model: {model_name}")
 
     gai.configure(api_key=package["apikey"].config.key_gemini())
     model = gai.GenerativeModel(
-        "gemini-2.5-flash-preview-04-17",
+        "gemini-2.0-flash",
         system_instruction=prompts_package["template"].GEMINI_TOOL_CALL_INSTRUCTION
         % (original_tools, formatted_tool_names),
         tools=tools,
@@ -318,7 +328,7 @@ async def chat_gemini_with_tools(
     tools,
     tool_call_processor,
     system_instruction,
-    fallback_1_5=False
+    fallback_1_5=False,
 ):
     model_response, tool_calls = await chat_gemini_tool_call(
         messages_original, tools, system_instruction, fallback_1_5

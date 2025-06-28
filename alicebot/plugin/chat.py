@@ -233,7 +233,7 @@ class ContextManager:
             return result
 
         autosaves = await get_autosaves_file_informations()
-        autosave_str = "<|start_header|>gather_information_and_respond_by_using_typesetting_format<|end_header|>\n# here are my files saved in the past, I will use them as datebase to answer questions:\n"
+        autosave_str = "<|start_header|>think<|end_header|>\n# here are my files saved in the past, I will use them as datebase to answer questions:\n"
         autosave_str += "filename | modify time\n --- | --- \n"
         for autosave in autosaves:
             autosave_str += f"{autosave['filename']} | {autosave['modify_time']}\n"
@@ -253,7 +253,7 @@ class ContextManager:
             except:
                 group_member_list = []
             if len(group_member_list) <= 200:
-                formatted_member_list = "<|start_header|>gather_information_and_respond_by_using_typesetting_format<|end_header|>\n```group member list\ncard | nickname | gender | qq\n --- | --- | --- | ---\n"
+                formatted_member_list = "```group member list\ncard | nickname | gender | qq\n --- | --- | --- | ---\n"
                 for member in group_member_list:
                     formatted_member_list += f"{member['card']} | {member['nickname']} | {member['sex']} | {member['user_id']}\n"
                 formatted_member_list += "```"
@@ -276,15 +276,15 @@ class ContextManager:
             _context.insert(
                 0,
                 {
-                    "role": "user",
-                    "content": f"# Group Member List:\n{formatted_member_list}",
+                    "role": "assistant",
+                    "content": f"<|start_header|>think<|end_header|># Group Member List:\n{formatted_member_list}",
                 },
             )
 
         if stream_context:
             stream_context_str = ""
             for item in stream_context.get_message():
-                stream_context_str += f"""# [{item['role']} [CQ:at,qq={item['user_id']}], name: {item['name']}]({item['time']}, msgid: [CQ:reply,id={item['message_id']}]):\n{item['content']}\n\n"""
+                stream_context_str += f"""# [{item['role']} [CQ:at,qq={item['user_id']}], name: {item['name']}]({item['time']}, msgid: [CQ:reply,id={item['message_id']}]):\n{item['content']}\n\n---\n\n"""
             _context.insert(
                 0,
                 {

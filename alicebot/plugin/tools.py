@@ -3,8 +3,8 @@ from typing import Callable, Any
 
 import asyncio
 # from xlang import XLang, Context, NoneType, String
-from xlang import GCSystem, wrap_py_function, VMNull
-
+from xlang import GCSystem, wrap_py_function, VMNull, XlangExecutionError
+import time
 
 import pathlib
 
@@ -86,16 +86,22 @@ class XLangContexts:
             def xlang_get():
                 return gc.new_tuple([gc.new_named(k, v) for k, v in py_context.items()])
 
+            def xlang_clear():
+                py_context.clear()
+
             wrapped_set = wrap_py_function(gc, xlang_set)
             wrapped_get = wrap_py_function(gc, xlang_get)
+            wrapped_clear = wrap_py_function(gc, xlang_clear)
 
             self.contexts[group_id] = {
                 "gc": gc,
                 "py_context": py_context,
                 "wrapped_set": wrapped_set,
                 "wrapped_get": wrapped_get,
+                "wrapped_clear": wrapped_clear,
+
             }
-            log_func(f"XLang-Py context created for group {group_id}")
+            log_func("INFO", f"XLang-Py context created for group {group_id}")
         return self.contexts[group_id]
 
     def remove_context(self, group_id):
@@ -103,10 +109,72 @@ class XLangContexts:
             context = self.contexts[group_id]
             del context["wrapped_set"]
             del context["wrapped_get"]
+            del context["wrapped_clear"]
             del context["py_context"]
             context["gc"].collect()
             del self.contexts[group_id]
 
+
+xlang_header = """
+@required context;
+@required let;
+@required clear;
+
+iter := builtin::(container?, wrapper?) -> if (container == null or wrapper == null) {
+    return () -> false;
+} else {
+    return (container!, wrapper!, n => 0) -> {
+        if (n >= lengthof container) {
+            return false;
+        };
+        wrapper = container[n];
+        n = n + 1;
+        return true;
+    };
+};
+
+lazy_value := builtin::(expensive_computation?) -> {
+    if (valueof expensive_computation == null) {
+        expensive_computation()
+    } else {
+        valueof expensive_computation
+    }
+};
+
+Z := builtin::(f?) -> {
+    g := (x?) -> f((y?) -> x(x)(y));
+    return g(g);
+};
+
+stringify := builtin::(x?) -> ("%s" % (x,));
+
+repr := builtin::(x?) -> ("%r" % (x,));
+
+join_str := builtin::(tuple?, sep => ", ") -> {
+    i := 0;
+    result := "";
+    while (i < lengthof tuple) {
+        result = result + stringify(tuple[i]);
+        i = i + 1;
+        if (i < lengthof tuple) {
+            result = result + stringify(sep);
+        }
+    };
+    return result;
+};
+
+printable := builtin::(f?)->{
+    buffer := "";
+    print := (v?) -> {
+        buffer = buffer + stringify(v) + "\n";
+    };
+    result := f(print!);
+
+    return if (result == null) buffer else {
+        "%s\n%s" % (buffer, result)
+    }
+};
+"""
 
 class Plugin:
 
@@ -228,21 +296,31 @@ class Plugin:
                         gc = context["gc"]
 
                         is_error = False
+                        error = ""
+                        output = ""
 
+                        start_time = time.time()
+                        def run_condition():
+                            if time.time() - start_time > 3:
+                                raise RuntimeError("Execution timeout")
                         xlang_lambda = gc.new_lambda()
 
                         try:
                             xlang_lambda.load(
-                                code=xlang_code,
+                                code=xlang_header + f"""printable((print?)->{{
+{xlang_code}
+                                }})""",
                                 default_args=gc.new_tuple(
                                     [
                                         gc.new_named("let", context["wrapped_set"]),
                                         gc.new_named("context", context["wrapped_get"]),
+                                        gc.new_named("clear", context["wrapped_clear"]),
                                     ]
                                 ),
+                                run_condition=run_condition,
                             )
                             result = xlang_lambda()
-                            if not isinstance(result, [None, VMNull]):
+                            if not isinstance(result, (type(None), VMNull)):
                                 output = str(result)
                         except Exception as e:
                             error += str(e) + "\n"
@@ -274,7 +352,7 @@ class Plugin:
                         if result["is_error"]:
                             await api.send_group_message(
                                 message["group_id"],
-                                f"{result['error']}\nOutput:\n{result['output']}".strip(),
+                                f"{result['error']}".strip(),
                             )
                         else:
                             if result["output"] == "":
