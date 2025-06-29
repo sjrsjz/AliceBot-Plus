@@ -7,8 +7,11 @@ import traceback
 import base64
 import os
 import asyncio
+import aiohttp
+import random
+import bs4  # BeautifulSoup for HTML parsing
 from threading import Lock
-from typing import Callable, Any, List
+from typing import Callable, Any, List, Optional
 from bs4 import BeautifulSoup
 
 log_func: Callable[[Any], None]
@@ -78,6 +81,7 @@ profile_path.mkdir(parents=True, exist_ok=True)
 # ... (ContextManager class and its methods like get_group_context, build_context, etc. are here, UNCHANGED)
 def get_default_system_instruction():
     return example_prompt_package["Alice"].character
+
 
 def get_gemini_key():
     return aibackend_package["apikey"].config.key_gemini()
@@ -318,6 +322,66 @@ class ContextManager:
 # --- NEW: AGENT HELPER FUNCTIONS ---
 
 
+# --- Danbooru Logic (integrated from plugin) ---
+class Danbooru:
+    @staticmethod
+    async def get_random_post(
+        tags: Optional[str] = None, page: Optional[int] = None
+    ) -> Optional[dict]:
+        """Fetches a random Danbooru post, returning its data dictionary."""
+        # This is the exact code from your plugin file.
+        # Note: I've made it a @staticmethod for easier calling without an instance.
+        base_url = "https://danbooru.donmai.us/posts"
+
+        if page is None:
+            page = random.randint(1, 100)
+
+        params = {"page": page}
+        if tags:
+            # Danbooru API recommends a limit of 2 tags for unauthenticated users for speed.
+            # We will enforce this in the tool's prompt, but the function can handle more.
+            params["tags"] = tags
+
+        log_func("INFO", "DanbooruTool", f"Requesting Danbooru with params: {params}")
+
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.get(base_url, params=params, timeout=60) as response:
+                    if response.status != 200:
+                        log_func(
+                            "ERROR",
+                            "DanbooruTool",
+                            f"Failed to get post list: {response.status}",
+                        )
+                        return None
+
+                    soup = bs4.BeautifulSoup(await response.text(), "html.parser")
+                    posts = soup.select("article.post-preview")
+                    if not posts:
+                        return None
+
+                    post = random.choice(posts)
+                    img_url = post.get("data-file-url")
+                    large_img_url = post.get("data-large-file-url")
+
+                    # Prefer larger image if available, fallback to file_url
+                    final_image_url = large_img_url or img_url
+
+                    if not final_image_url:
+                        return None
+
+                    return {
+                        "tags": post.get("data-tags"),
+                        "img_url": final_image_url,
+                        "post_id": post.get("data-id"),
+                    }
+            except Exception as e:
+                log_func(
+                    "ERROR", "DanbooruTool", f"Exception during Danbooru fetch: {e}"
+                )
+                return None
+
+
 def get_agent_tool_codes() -> List[ToolCodeInfo]:
     """Defines the tools available to the agent in the required format."""
     return [
@@ -372,6 +436,14 @@ def get_agent_tool_codes() -> List[ToolCodeInfo]:
             detail="This is a specialized tool for deep mathematical research.",
             args={
                 "query": "The mathematical term or concept to look up (e.g., 'Eigenvalue' or 'Riemann Hypothesis')."
+            },
+        ),
+        ToolCodeInfo(
+            name="search_on_danbooru",
+            description="Searches for a random SFW (safe-for-work) or NSFW (not-safe-for-work) anime-style image on the Danbooru image board. Use this when the user asks for a 'random picture', 'anime image', or something similar.",
+            detail="You can provide tags to narrow the search. **IMPORTANT: You can only use a maximum of TWO (2) tags.** Tags with multiple words must be joined by an underscore (e.g., 'blue_hair'). The tool returns a direct URL to the image.",
+            args={
+                "tags": "A string containing one or two tags, separated by a space. Example: '1girl blue_hair'. Leave empty for a completely random image."
             },
         ),
     ]
@@ -443,6 +515,24 @@ async def create_agent_api_handler() -> DefaultApi:
             elif method_name == "search_on_mathworld":
                 result = await mathworld.get_content_from_results(first_arg, n=3)
                 return result or "No results found on MathWorld."
+            elif method_name == "search_on_danbooru":
+                # The 'first_arg' will be the tags string, or None
+                tags = first_arg
+                log_func(
+                    "INFO",
+                    entity_name,
+                    f"Agent is searching Danbooru with tags: {tags}",
+                )
+
+                # Call the Danbooru logic we added to this file
+                post_data = await Danbooru.get_random_post(tags=tags)
+
+                if post_data and post_data.get("img_url"):
+                    # Success! Return JUST the URL to the agent.
+                    return post_data["img_url"]
+                else:
+                    # Provide a helpful error message back to the agent
+                    return f"[Error] Could not find an image on Danbooru for the tags: '{tags}'. Please try different tags or no tags at all."
             else:
                 return f"[Error] Unknown tool called: {method_name}"
         except Exception as e:
@@ -464,7 +554,9 @@ def convert_history_to_chat_messages(history: List[dict]) -> List[ChatMessage]:
         if item.get("role") == "user":
             role = MessageRole.USER
         elif item.get("role") == "assistant":
-            role = MessageRole.ASSISTANT  # The agent's own responses are tagged as 'model'
+            role = (
+                MessageRole.ASSISTANT
+            )  # The agent's own responses are tagged as 'model'
 
         if role and "content" in item:
             chat_messages.append(ChatMessage(role=role, content=str(item["content"])))
@@ -529,6 +621,12 @@ Use these tags to perform specific actions. Do NOT use them for simple text form
    - **Purpose:** Renders the enclosed Markdown content as an image. Use this for complex tables, formulas, or layouts that standard HTML can't handle.
    - **Example:** `<markdown-render>| Header 1 | Header 2 |\n|---|---|\n| Cell 1 | Cell 2 |</markdown-render>`
 
+**6. Display Image from URL:**
+   - **Tag:** `<image src="..." />`
+   - **Purpose:** Downloads an image from a public URL and displays it directly in the chat.
+   - **Attributes:** `src` - The full, direct URL to the image file (e.g., .png, .jpg, .gif).
+   - **Example:** `<image src="https://www.google.com/images/branding/googlelogo/1x/googlelogo_color_272x92dp.png" />`
+
 ---
 ### **Final Instruction**
 Your entire final response must be composed using a sequence of the tags described above.
@@ -544,14 +642,6 @@ def get_typeset_handler(api, browser, template):
         time = 10 if time > 10 else (time if time > 0 else 1)
         await api.set_group_ban(group_id, user, time * 60)
         return f" 已禁言[CQ:at,qq={user}]{time}分钟 "
-
-    async def handle_write_file(x: dict, **kwargs) -> str:
-        content = x["content"]
-        file_name = x["filename"]
-
-        with open(profile_path / file_name, "w", encoding="utf-8") as f:
-            f.write(content)
-        return f" [{file_name}]已保存 "
 
     async def handle_tts(x: dict, **kwargs) -> str:
         text = x["text"]
@@ -627,13 +717,45 @@ def get_typeset_handler(api, browser, template):
         )
         return f"[CQ:image,file=base64://{base64.b64encode(result).decode()}]"
 
+    async def handle_image_from_url(tag: BeautifulSoup) -> str:
+        url = tag.get("src")
+        if not url or not url.startswith(("http://", "https://")):
+            return "[图片错误: 无效的URL]"
+
+        log_func("INFO", entity_name, f"Processing image URL: {url}")
+        try:
+            async with aiohttp.ClientSession() as session:
+                # 1. 先用 HEAD 请求检查 URL 和内容类型，避免下载大文件
+                async with session.head(url, timeout=10) as response:
+                    if response.status != 200:
+                        return f"[图片错误: URL无法访问，状态码 {response.status}]"
+
+                    content_type = response.headers.get("Content-Type", "").lower()
+                    if not content_type.startswith("image/"):
+                        return f"[图片错误: URL指向的不是一个图片文件 ({content_type})]"
+
+                # 2. 检查通过后，再用 GET 请求下载图片内容
+                async with session.get(url, timeout=30) as response:
+                    if response.status == 200:
+                        image_data = await response.read()
+                        encoded_data = base64.b64encode(image_data).decode("utf-8")
+                        return f"[CQ:image,file=base64://{encoded_data}]"
+                    else:
+                        return f"[图片错误: 下载失败，状态码 {response.status}]"
+
+        except asyncio.TimeoutError:
+            return "[图片错误: 访问URL超时]"
+        except Exception as e:
+            log_func("ERROR", entity_name, f"Error processing image URL {url}: {e}")
+            return f"[图片错误: 处理时发生未知异常]"
+
     return {
         "DocumentRender": handle_markdown_render,
         "shut_up": handle_shut_up,
-        "write_to_file": handle_write_file,
         "text_to_speech": handle_tts,
         "display_wolframalpha": handle_wolfram,
         "graphic_art_in_English": handle_graphic_art,
+        "image_from_url": handle_image_from_url,
     }
 
 
@@ -704,9 +826,15 @@ async def handle_agent_output(
         )
         tag.replace_with(result_cq)
 
+    # <image src="...">
+    for tag in soup.find_all("image"):
+        result_cq = await legacy_handlers["image_from_url"](tag)
+        tag.replace_with(result_cq)
+
     final_text = soup.get_text(separator="", strip=True)
-    
+
     return final_text
+
 
 class Plugin:
     context_manager = None
@@ -1005,7 +1133,7 @@ Powered by ✨Gemini-Flash-2.0 via AutoGemini Agent
                     character_description=group_context["ai_params"][
                         "system_instruction"
                     ],
-                    respond_tags_description= CUSTOM_TAGS_PROMPT,
+                    respond_tags_description=CUSTOM_TAGS_PROMPT,
                 )
 
                 # 6. Load the conversation history into the agent.
