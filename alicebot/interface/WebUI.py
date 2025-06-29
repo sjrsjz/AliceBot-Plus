@@ -797,17 +797,22 @@ class WebUI:
                     return results === null ? '' : decodeURIComponent(results[1].replace(/\\+/g, ' '));
                 }}
 
+                function escapeHtml(unsafe) {{
+                    return unsafe
+                        .replace(/&/g, "&amp;")
+                        .replace(/</g, "&lt;")
+                        .replace(/>/g, "&gt;")
+                        .replace(/\"/g, "&quot;")
+                        .replace(/'/g, "&#039;");
+                }}
                 function colorizeLogText(text) {{
                     if (!text) return '';
-                    
                     // 将日志文本按行分割
-                    const lines = text.split('\\n').filter(line => line.trim() !== '');
-                    
+                    const lines = text.split('\n').filter(line => line.trim() !== '');
                     // 为每行创建独立的样式区块
                     return lines.map(line => {{
                         let logClass = 'log-normal';
                         let logColor = 'var(--text-color)';
-                        
                         // 根据日志级别应用不同的样式
                         if (line.includes('[INFO]')) {{
                             logClass = 'log-info';
@@ -822,11 +827,11 @@ class WebUI:
                             logClass = 'log-error';
                             logColor = 'var(--danger-color)';
                         }}
-                        
+                        // 先对整行做HTML转义
+                        let safeLine = escapeHtml(line);
                         // 提取日志级别标签进行高亮处理
-                        const formattedLine = line.replace(/\[(INFO|WARN|DEBUG|ERROR)\]/g, 
+                        const formattedLine = safeLine.replace(/\[(INFO|WARN|DEBUG|ERROR)\]/g, 
                             (match, level) => `<span style="color: ${{logColor}}; font-weight: 600;">[${{level}}]</span>`);
-                        
                         // 返回带样式的日志行
                         return `<div class="log-line ${{logClass}}" style="padding: 4px 8px; margin: 2px 0; border-radius: 4px; border-left: 3px solid ${{logColor}}; background-color: var(--bg-color);">${{formattedLine}}</div>`;
                     }}).join('');
