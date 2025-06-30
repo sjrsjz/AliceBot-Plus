@@ -808,7 +808,7 @@ class WebUI:
                 function colorizeLogText(text) {{
                     if (!text) return '';
                     // 将日志文本按行分割
-                    const lines = text.split('\n').filter(line => line.trim() !== '');
+                    const lines = text.split('\\n').filter(line => line.trim() !== '');
                     // 为每行创建独立的样式区块
                     return lines.map(line => {{
                         let logClass = 'log-normal';

@@ -11,7 +11,7 @@ import aiohttp
 import random
 import bs4  # BeautifulSoup for HTML parsing
 from threading import Lock
-from typing import Callable, Any, List, Optional
+from typing import Callable, Any, List, Optional, Dict
 from bs4 import BeautifulSoup
 
 log_func: Callable[[Any], None]
@@ -322,64 +322,198 @@ class ContextManager:
 # --- NEW: AGENT HELPER FUNCTIONS ---
 
 
-# --- Danbooru Logic (integrated from plugin) ---
 class Danbooru:
+    """
+    通过并发请求优化了Danbooru帖子的获取过程。
+    首先获取帖子列表，然后并发获取每个帖子的详细信息（如高清图URL）。
+    """
+
+    @staticmethod
+    async def _fetch_post_details(
+        session: aiohttp.ClientSession, post: bs4.element.Tag
+    ) -> Optional[Dict]:
+        """
+        一个辅助方法，用于异步获取单个帖子的详细信息。
+        这是并发执行的核心单元。
+
+        参数:
+            session: aiohttp客户端会话。
+            post: 从列表页解析出的单个帖子的BeautifulSoup Tag对象。
+        """
+        post_id = post.get("data-id")
+        if not post_id:
+            return None  # 如果没有post_id，则跳过
+
+        post_tags = post.get("data-tags", "")
+        post_link = f"https://danbooru.donmai.us/posts/{post_id}"
+
+        img_url = ""
+        # 尝试从详情页获取原图 (这是网络IO密集型操作)
+        log_func("INFO", entity_name, f"开始获取帖子详情: {post_link}")
+        try:
+            async with session.get(post_link) as detail_response:
+                if detail_response.status == 200:
+                    detail_html = await detail_response.text()
+                    detail_soup = bs4.BeautifulSoup(detail_html, "html.parser")
+                    # 查找图片元素的逻辑保持不变
+                    img_element = detail_soup.select_one(
+                        "section.image-container picture img"
+                    )
+                    if not img_element:
+                        img_element = detail_soup.select_one(
+                            "section.image-container img"
+                        )
+                    if img_element:
+                        img_url = img_element.get("src", "")
+                        if not img_url:
+                            img_url = img_element.get(
+                                "data-large-file-url"
+                            ) or img_element.get("data-file-url")
+                else:
+                    log_func(
+                        "WARN",
+                        entity_name,
+                        f"访问详情页失败 {post_link}，状态码: {detail_response.status}",
+                    )
+        except Exception as e:
+            log_func("ERROR", entity_name, f"获取帖子详情页异常 {post_link}: {e}")
+
+        # 如果详情页获取失败，回退到从列表页解析预览图的逻辑
+        if not img_url:
+            log_func(
+                "INFO", entity_name, f"无法从详情页获取图片，尝试从列表页获取 {post_id}"
+            )
+            source_element = post.select_one("source")
+            if source_element and (srcset := source_element.get("srcset")):
+                # srcset 通常包含多个尺寸，取最后一个（通常是最大的）
+                img_url = srcset.split(",")[-1].strip().split(" ")[0]
+            if not img_url:
+                img_element = post.select_one("img")
+                if img_element:
+                    img_url = (
+                        img_element.get("data-large-file-url")
+                        or img_element.get("data-file-url")
+                        or img_element.get("src", "")
+                    )
+
+        if not img_url:
+            log_func("WARN", entity_name, f"最终未能找到帖子 {post_id} 的图片URL")
+            return None
+
+        log_func(
+            "INFO",
+            entity_name,
+            f"成功获取 Post ID: {post_id}, Image URL: {img_url[:50]}...",
+        )
+        return {
+            "tags": post_tags,
+            "img_url": img_url,
+            "post_id": post_id,
+            "post_link": post_link,
+        }
+
     @staticmethod
     async def get_random_post(
         tags: Optional[str] = None, page: Optional[int] = None
-    ) -> Optional[dict]:
-        """Fetches a random Danbooru post, returning its data dictionary."""
-        # This is the exact code from your plugin file.
-        # Note: I've made it a @staticmethod for easier calling without an instance.
+    ) -> Optional[List[Dict]]:
+        """
+        并发获取Danbooru帖子列表，返回所有解析到的图片和标签等信息。
+
+        参数:
+            tags: 可选，指定标签查询，多个标签用空格分隔。
+            page: 可选，指定页码，默认为随机页码。
+        """
         base_url = "https://danbooru.donmai.us/posts"
 
+        # --- 步骤 1: 获取帖子列表页 (单次请求) ---
         if page is None:
             page = random.randint(1, 100)
+            log_func("INFO", entity_name, f"随机页面: {page}")
+        else:
+            log_func("INFO", entity_name, f"指定页面: {page}")
 
         params = {"page": page}
         if tags:
-            # Danbooru API recommends a limit of 2 tags for unauthenticated users for speed.
-            # We will enforce this in the tool's prompt, but the function can handle more.
+            # Danbooru API 限制 tag 数量，这里在前端进行提醒
+            if len(tags.split()) > 2:
+                log_func(
+                    "WARN", entity_name, "Danbooru 建议最多使用两个标签以避免422错误。"
+                )
             params["tags"] = tags
-
-        log_func("INFO", "DanbooruTool", f"Requesting Danbooru with params: {params}")
+            log_func("INFO", entity_name, f"按标签搜索: {tags}")
 
         async with aiohttp.ClientSession() as session:
             try:
-                async with session.get(base_url, params=params, timeout=60) as response:
-                    if response.status != 200:
+                async with session.get(base_url, params=params) as response:
+                    if response.status == 422:
                         log_func(
                             "ERROR",
-                            "DanbooruTool",
-                            f"Failed to get post list: {response.status}",
+                            entity_name,
+                            "Danbooru 422错误，可能是tag过多。AI应限制最多只能使用两个tag。",
                         )
-                        return None
+                        raise Exception(
+                            "422 Unprocessable Entity: Too many tags. Please use at most two tags for Danbooru search."
+                        )
+                    response.raise_for_status()  # 对所有非2xx状态码抛出异常
 
-                    soup = bs4.BeautifulSoup(await response.text(), "html.parser")
-                    posts = soup.select("article.post-preview")
-                    if not posts:
-                        return None
+                    html = await response.text()
+                    soup = bs4.BeautifulSoup(html, "html.parser")
+                    posts_on_page = soup.select("article.post-preview")
 
-                    post = random.choice(posts)
-                    img_url = post.get("data-file-url")
-                    large_img_url = post.get("data-large-file-url")
+                    if not posts_on_page:
+                        log_func("ERROR", entity_name, "没有找到帖子元素")
+                        raise Exception(
+                            "No posts found on Danbooru for the given tags and page."
+                        )
 
-                    # Prefer larger image if available, fallback to file_url
-                    final_image_url = large_img_url or img_url
+                    # --- 步骤 2: 为每个帖子创建并发任务 ---
+                    tasks = [
+                        Danbooru._fetch_post_details(session, post)
+                        for post in posts_on_page
+                    ]
 
-                    if not final_image_url:
-                        return None
+                    # --- 步骤 3: 并发执行所有任务并等待结果 ---
+                    log_func(
+                        "INFO",
+                        entity_name,
+                        f"找到 {len(tasks)} 个帖子, 开始并发获取详情...",
+                    )
+                    results_with_none = await asyncio.gather(
+                        *tasks, return_exceptions=True
+                    )
 
-                    return {
-                        "tags": post.get("data-tags"),
-                        "img_url": final_image_url,
-                        "post_id": post.get("data-id"),
-                    }
+                    # --- 步骤 4: 处理结果 ---
+                    final_results = []
+                    for res in results_with_none:
+                        if isinstance(res, Exception):
+                            log_func("ERROR", entity_name, f"一个并发任务失败: {res}")
+                        elif res is not None:
+                            final_results.append(res)
+
+                    log_func(
+                        "INFO",
+                        entity_name,
+                        f"成功获取 {len(final_results)} 个帖子的详细信息。",
+                    )
+                    return final_results
+
+            except aiohttp.ClientResponseError as e:
+                # 重新组织异常处理，使其更清晰
+                if e.status == 422:
+                    log_func(
+                        "ERROR",
+                        entity_name,
+                        "Danbooru 422错误，可能是tag过多。AI应限制最多只能使用两个tag。",
+                    )
+                    raise Exception(
+                        "422 Unprocessable Entity: Too many tags. Please use at most two tags for Danbooru search."
+                    )
+                else:
+                    log_func("ERROR", entity_name, f"获取帖子列表失败: {e}")
+                    raise Exception(f"Failed to fetch posts list: {e}")
             except Exception as e:
-                log_func(
-                    "ERROR", "DanbooruTool", f"Exception during Danbooru fetch: {e}"
-                )
-                return None
+                log_func("ERROR", entity_name, f"Danbooru请求异常: {e}")
+                raise Exception(f"Danbooru request error: {e}")
 
 
 def get_agent_tool_codes() -> List[ToolCodeInfo]:
@@ -516,23 +650,18 @@ async def create_agent_api_handler() -> DefaultApi:
                 result = await mathworld.get_content_from_results(first_arg, n=3)
                 return result or "No results found on MathWorld."
             elif method_name == "search_on_danbooru":
-                # The 'first_arg' will be the tags string, or None
                 tags = first_arg
                 log_func(
                     "INFO",
                     entity_name,
                     f"Agent is searching Danbooru with tags: {tags}",
                 )
-
-                # Call the Danbooru logic we added to this file
-                post_data = await Danbooru.get_random_post(tags=tags)
-
-                if post_data and post_data.get("img_url"):
-                    # Success! Return JUST the URL to the agent.
-                    return post_data["img_url"]
-                else:
-                    # Provide a helpful error message back to the agent
-                    return f"[Error] Could not find an image on Danbooru for the tags: '{tags}'. Please try different tags or no tags at all."
+                try:
+                    post_data = await Danbooru.get_random_post(tags=tags)
+                    return post_data
+                except Exception as e:
+                    log_func("ERROR", entity_name, f"search_on_danbooru error: {e}")
+                    return f"[Danbooru Error] {e}"
             else:
                 return f"[Error] Unknown tool called: {method_name}"
         except Exception as e:
@@ -576,13 +705,12 @@ This allows your response to be displayed correctly and for special actions to b
 Use these for structuring your text response.
 
 - `<p>...</p>`: For standard paragraphs.
-- `<br>`: For line breaks within paragraphs.
+- `<br>`: For line breaks, since your output will be rendered as HTML., `<br>` is important for separating lines.
 - `<h1>, <h2>, <h3>`: For section headings.
 - `<strong>, <b>`: For strong emphasis.
 - `<em>, <i>`: For general emphasis.
 - `<ul>, <ol>, <li>`: For lists.
 - `<code>, <pre>`: For code blocks.
-- `<br>`: For a line break.
 - `<a href="...">...</a>`: For hyperlinks.
 
 ---
@@ -594,6 +722,7 @@ Use these tags to perform specific actions. Do NOT use them for simple text form
    - **Purpose:** Converts the enclosed text into a voice message.
    - **Attributes:** `emotion` (optional) - can be "happy", "sad", "excited", etc., to influence the voice tone.
    - **Example:** `<tts emotion="excited">主人，我算出来啦！</tts>`
+   - **Note:** Since the TTS costs money, use it only when necessary.
 
 **2. AI Painting:**
    - **Tag:** `<paint style="..." orientation="...">...</paint>`
@@ -1140,7 +1269,7 @@ Powered by ✨Gemini-Flash-2.0 via AutoGemini Agent
                 processor.load_history(agent_history)
 
                 # 7. Define a simple callback for debugging the agent's internal steps.
-                def stream_callback(chunk: Any, msg_type: CallbackMsgType):
+                async def stream_callback(chunk: Any, msg_type: CallbackMsgType):
                     log_func("DEBUG", f"Agent-{msg_type.name}", str(chunk))
 
                 # 8. Run the agent's processing loop.
