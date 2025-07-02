@@ -13,6 +13,9 @@ import bs4  # BeautifulSoup for HTML parsing
 from threading import Lock
 from typing import Callable, Any, List, Optional, Dict
 from bs4 import BeautifulSoup
+from urllib.parse import urlparse  # <--- 添加这行
+import ipaddress  # <--- 添加这行
+import html2text
 
 log_func: Callable[[Any], None]
 plugin_context: Any  # 插件上下文，由插件管理器传入
@@ -540,6 +543,18 @@ def get_agent_tool_codes() -> List[ToolCodeInfo]:
             args={"code": "A string containing valid Python code to be executed."},
         ),
         ToolCodeInfo(
+            name="http_request",
+            description="Makes a generic HTTP request (e.g., GET, POST) to a specified URL. Use this for interacting with web APIs that do not have a dedicated tool.",
+            detail="Allows you to send customized HTTP requests. You can specify the method, headers, URL parameters, and a JSON body. Returns the text content of the response. **Security Warning:** Do not include secret API keys or other credentials in your calls unless explicitly instructed and acknowledged by the user. Requests to local network addresses are forbidden.",
+            args={
+                "method": "The HTTP method to use (e.g., 'GET', 'POST', 'PUT', 'DELETE'). Must be uppercase.",
+                "url": "The full URL of the API endpoint to call.",
+                "params": "Optional. A dictionary of URL parameters for GET requests (e.g., {'query': 'value'}).",
+                "headers": "Optional. A dictionary of HTTP headers to send (e.g., {'Content-Type': 'application/json', 'Authorization': 'Bearer ...'}).",
+                "json_body": "Optional. A dictionary that will be automatically converted to a JSON string and sent as the request body, typically for POST or PUT requests.",
+            },
+        ),
+        ToolCodeInfo(
             name="compute_with_wolfram",
             description="Solves complex mathematical problems, answers scientific questions, and provides structured data using the Wolfram Alpha engine.",
             detail="Ideal for calculus, algebra, chemistry, physics, and knowledge-based queries.",
@@ -577,7 +592,7 @@ def get_agent_tool_codes() -> List[ToolCodeInfo]:
             description="Searches for a random SFW (safe-for-work) or NSFW (not-safe-for-work) anime-style image on the Danbooru image board. Use this when the user asks for a 'random picture', 'anime image', or something similar.",
             detail="You can provide tags to narrow the search. **IMPORTANT: You can only use a maximum of TWO (2) tags.** Tags with multiple words must be joined by an underscore (e.g., 'blue_hair'). The tool returns a direct URL to the image.",
             args={
-                "tags": "A string containing one or two tags, separated by a space. Example: '1girl blue_hair'. Leave empty for a completely random image."
+                "tags": "A string containing one or two tags, separated by a space. Example: '1girl blue_hair'. Leave empty for a completely random image. ONLY supports **ENGLISH** tags.",
             },
         ),
     ]
@@ -662,6 +677,41 @@ async def create_agent_api_handler() -> DefaultApi:
                 except Exception as e:
                     log_func("ERROR", entity_name, f"search_on_danbooru error: {e}")
                     return f"[Danbooru Error] {e}"
+            elif method_name == "http_request":
+                method = kwargs.get("method")
+                url = kwargs.get("url")
+
+                if not method or not url:
+                    return "[HTTP Request Error] 'method' and 'url' are required arguments."
+
+                if _is_disallowed_url(url):
+                    return f"[HTTP Request Error] Access to the URL '{url}' is forbidden for security reasons."
+
+                params = kwargs.get("params")
+                headers = kwargs.get("headers")
+                json_body = kwargs.get("json_body")
+                
+                try:
+                    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
+                        async with session.request(
+                            method=method.upper(),
+                            url=url,
+                            params=params,
+                            headers=headers,
+                            json=json_body
+                        ) as response:
+                            response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
+                            # 注意：如果API返回的是二进制数据（如图片），.text()可能会出错。
+                            # 目前假设API返回文本（如JSON）。
+                            return await response.text()
+                except asyncio.TimeoutError:
+                    return f"[HTTP Request Error] The request to '{url}' timed out."
+                except aiohttp.ClientResponseError as e:
+                    return f"[HTTP Request Error] Status {e.status}: {e.message}. URL: {url}"
+                except aiohttp.ClientError as e:
+                    return f"[HTTP Request Error] A client-side error occurred: {e}. URL: {url}"
+                except Exception as e:
+                    return f"[HTTP Request Error] An unexpected error occurred: {e}. URL: {url}"
             else:
                 return f"[Error] Unknown tool called: {method_name}"
         except Exception as e:
@@ -673,6 +723,30 @@ async def create_agent_api_handler() -> DefaultApi:
             return f"[Error] An exception occurred while executing tool '{method_name}': {e}"
 
     return DefaultApi(api_handler)
+
+
+def _is_disallowed_url(url: str) -> bool:
+    """Checks if a URL points to a disallowed address (e.g., localhost, private network)."""
+    try:
+        parsed_url = urlparse(url)
+        hostname = parsed_url.hostname
+        if not hostname:
+            return True  # Not a valid hostname
+
+        # Resolve hostname to IP address to check if it's a private/local IP
+        ip = ipaddress.ip_address(hostname)
+        return ip.is_private or ip.is_loopback or ip.is_unspecified
+    except ValueError:
+        # If hostname is not a valid IP, it's a domain name.
+        # We perform a basic check for common local-only names.
+        if hostname in ["localhost", "host.docker.internal"]:
+            return True
+        # A more robust solution might involve DNS resolution here, but that adds latency.
+        # For now, we assume public domain names are safe.
+        return False
+    except Exception:
+        # Any other parsing error
+        return True
 
 
 def convert_history_to_chat_messages(history: List[dict]) -> List[ChatMessage]:
@@ -765,6 +839,15 @@ Your entire final response must be composed using a sequence of the tags describ
 
 
 def get_typeset_handler(api, browser, template):
+    def escape_html(text: str) -> str:
+        """Escapes HTML special characters in the text."""
+        return (
+            text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&#39;")
+        )
     async def handle_shut_up(x: dict, group_id: int, **kwargs) -> tuple[str, str]:
         user = x["user_id"]
         time = x["minutes"]
@@ -888,6 +971,39 @@ def get_typeset_handler(api, browser, template):
     }
 
 
+def convert_html_to_readable_text(html_content: str) -> str:
+    """
+    Converts HTML content to a human-readable, Markdown-like plain text.
+    - Handles headers, lists, links, and tables gracefully.
+    - The output is fully copy-paste friendly.
+    """
+    if not html_content:
+        return ""
+
+    # 创建一个 html2text 转换器实例
+    h = html2text.HTML2Text()
+
+    # --- 可选的配置，让输出更好看 ---
+    # 不换行处理链接，而是将链接显示在括号里，如：[Google](http.google.com)
+    h.body_width = 0
+    # 标题使用 #, ## 样式
+    h.style_headers_with_dashes = False
+    # Google风格的表格
+    h.google_doc = True
+    # 链接使用Markdown格式
+    h.use_automatic_links = True
+
+    try:
+        # 执行转换
+        text = h.handle(html_content)
+        return text
+    except Exception as e:
+        log_func("ERROR", entity_name, f"html2text conversion failed: {e}")
+        # 如果转换失败，回退到简单的 get_text
+        soup = BeautifulSoup(html_content, "lxml")
+        return soup.get_text(separator="", strip=True)
+
+
 async def handle_agent_output(
     html_output: str,
     api: Any,  # Pass the onebot api instance
@@ -960,7 +1076,8 @@ async def handle_agent_output(
         result_cq = await legacy_handlers["image_from_url"](tag)
         tag.replace_with(result_cq)
 
-    final_text = soup.get_text(separator="", strip=True)
+    remaining_html = str(soup)
+    final_text = convert_html_to_readable_text(remaining_html)
 
     return final_text
 
@@ -1263,6 +1380,8 @@ Powered by ✨Gemini-Flash-2.0 via AutoGemini Agent
                         "system_instruction"
                     ],
                     respond_tags_description=CUSTOM_TAGS_PROMPT,
+                    model="gemini-2.5-flash",
+                    temperature=1.0
                 )
 
                 # 6. Load the conversation history into the agent.
@@ -1300,7 +1419,7 @@ Powered by ✨Gemini-Flash-2.0 via AutoGemini Agent
                     await api.send_group_message_separate_audio(
                         group_id,
                         await message_codec_package["codec"].decode_CQ_to_message(
-                            parsed_output
+                            parsed_output.strip()
                         ),
                     )
 

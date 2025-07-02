@@ -29,5 +29,6 @@ psutil
 
 # xlang-script
 autogemini
+html2text
 
 git+https://github.com/sjrsjz/xlang-py.git
