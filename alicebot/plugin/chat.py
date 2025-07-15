@@ -243,7 +243,7 @@ class ContextManager:
             return result
 
         autosaves = await get_autosaves_file_informations()
-        autosave_str = "<|start_header|>think<|end_header|>\n# here are my files saved in the past, I will use them as datebase to answer questions:\n"
+        autosave_str = "<|start_header|>think_before_new_cycle<|end_header|>\n# here are my files saved in the past, I will use them as datebase to answer questions:\n"
         autosave_str += "filename | modify time\n --- | --- \n"
         for autosave in autosaves:
             autosave_str += f"{autosave['filename']} | {autosave['modify_time']}\n"
@@ -286,7 +286,7 @@ class ContextManager:
                 0,
                 {
                     "role": "assistant",
-                    "content": f"<|start_header|>think<|end_header|># Group Member List:\n{formatted_member_list}",
+                    "content": f"<|start_header|>system_tool_code_result<|end_header|># Group Member List:\n{formatted_member_list}",
                 },
             )
 
@@ -298,7 +298,7 @@ class ContextManager:
                 0,
                 {
                     "role": "user",
-                    "content": f"# Group Message History Context (Multi-Users, Important):\n{stream_context_str}",
+                    "content": f"<|start_header|>system_tool_code_result<|end_header|># Group Message History Context (Multi-Users, Important):\n{stream_context_str}",
                 },
             )
 
@@ -690,17 +690,19 @@ async def create_agent_api_handler() -> DefaultApi:
                 params = kwargs.get("params")
                 headers = kwargs.get("headers")
                 json_body = kwargs.get("json_body")
-                
+
                 try:
-                    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
+                    async with aiohttp.ClientSession(
+                        timeout=aiohttp.ClientTimeout(total=60)
+                    ) as session:
                         async with session.request(
                             method=method.upper(),
                             url=url,
                             params=params,
                             headers=headers,
-                            json=json_body
+                            json=json_body,
                         ) as response:
-                            response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
+                            response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
                             # 注意：如果API返回的是二进制数据（如图片），.text()可能会出错。
                             # 目前假设API返回文本（如JSON）。
                             return await response.text()
@@ -848,6 +850,7 @@ def get_typeset_handler(api, browser, template):
             .replace('"', "&quot;")
             .replace("'", "&#39;")
         )
+
     async def handle_shut_up(x: dict, group_id: int, **kwargs) -> tuple[str, str]:
         user = x["user_id"]
         time = x["minutes"]
@@ -1371,17 +1374,20 @@ Powered by ✨Gemini-Flash-2.0 via AutoGemini Agent
                     )
                     return
 
+                addtitional_prompt = """# Since you are an AI agent in a group chat, you must carefully consider the `# Group Message History Context` before responding.
+This context is crucial for understanding the conversation and providing relevant responses."""
+
                 # 5. Create a new agent processor for this specific request.
                 processor = create_cot_processor(
                     api_key=gemini_api_key,
                     default_api=agent_api_handler,
                     tool_codes=agent_tool_codes,
-                    character_description=group_context["ai_params"][
+                    character_description=addtitional_prompt + "\n" + group_context["ai_params"][
                         "system_instruction"
                     ],
                     respond_tags_description=CUSTOM_TAGS_PROMPT,
                     model="gemini-2.5-flash",
-                    temperature=1.0
+                    temperature=1.0,
                 )
 
                 # 6. Load the conversation history into the agent.

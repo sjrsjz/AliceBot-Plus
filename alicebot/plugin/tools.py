@@ -1,12 +1,19 @@
 import base64
 from typing import Callable, Any
-
 import asyncio
-# from xlang import XLang, Context, NoneType, String
-from xlang import GCSystem, wrap_py_function, VMNull, XlangExecutionError
 import time
-
 import pathlib
+
+# onion 绑定
+from onion import (
+    eval as onion_eval,
+    eval_or_throw as onion_eval_or_throw,
+    PyOnionObject,
+    wrap_py_function as onion_wrap_py_function,
+    wrap_py_coroutine as onion_wrap_py_coroutine,
+    OnionRuntimeError,
+)
+
 
 log_func: Callable[[Any], None]
 plugin_context: Any  # 插件上下文，由插件管理器传入
@@ -30,8 +37,6 @@ document_renderer = document_renderer_package.load_module(
     "renderer", hot_reload=True, log_func=log_func
 )
 
-xlang_modules_path = pathlib.Path(__file__).parent / "modules"
-xlang_modules_path.mkdir(exist_ok=True)
 
 entity_name = "Tools"
 
@@ -39,7 +44,7 @@ tools_help = r"""
 快速工具
 - mdr <markdown>: 渲染 markdown 为图片。
 - typst <typst>: 渲染 typst 为图片。
-- $ <xlang>: 执行 XLang 代码。
+- $ <onion>: 执行 Onion 代码。
 """
 
 
@@ -71,37 +76,50 @@ tools_help = r"""
 #             del self.contexts[group_id]
 
 
-class XLangContexts:
+# Onion 上下文管理
+class OnionContexts:
     def __init__(self):
         self.contexts = {}
 
     def get_context(self, group_id):
         if group_id not in self.contexts:
-            gc = GCSystem()
             py_context = {}
 
-            def xlang_set(**kwargs):
-                py_context.update(kwargs)
+            def onion_set(self_object, arguments):
+                if len(arguments) != 1:
+                    raise OnionRuntimeError("set() requires exactly one argument")
+                if not arguments[0].is_named():
+                    raise OnionRuntimeError("set() argument must be a named object")
+                k = arguments[0].key()
+                v = arguments[0].value()
+                py_context[k.as_string()] = v
 
-            def xlang_get():
-                return gc.new_tuple([gc.new_named(k, v) for k, v in py_context.items()])
+            def onion_get(self_object, arguments):
+                # 返回 dict 形式
+                return PyOnionObject(
+                    [PyOnionObject.named(k, v) for k, v in py_context.items()]
+                )
 
-            def xlang_clear():
+            def onion_clear(self_object, arguments):
                 py_context.clear()
 
-            wrapped_set = wrap_py_function(gc, xlang_set)
-            wrapped_get = wrap_py_function(gc, xlang_get)
-            wrapped_clear = wrap_py_function(gc, xlang_clear)
+            wrapped_set = onion_wrap_py_function(
+                PyOnionObject.tuple([]), "<python>::set", onion_set, None, None
+            )
+            wrapped_get = onion_wrap_py_function(
+                PyOnionObject.tuple([]), "<python>::get", onion_get, None, None
+            )
+            wrapped_clear = onion_wrap_py_function(
+                PyOnionObject.tuple([]), "<python>::clear", onion_clear, None, None
+            )
 
             self.contexts[group_id] = {
-                "gc": gc,
                 "py_context": py_context,
                 "wrapped_set": wrapped_set,
                 "wrapped_get": wrapped_get,
                 "wrapped_clear": wrapped_clear,
-
             }
-            log_func("INFO", f"XLang-Py context created for group {group_id}")
+            log_func("INFO", f"Onion context created for group {group_id}")
         return self.contexts[group_id]
 
     def remove_context(self, group_id):
@@ -111,74 +129,11 @@ class XLangContexts:
             del context["wrapped_get"]
             del context["wrapped_clear"]
             del context["py_context"]
-            context["gc"].collect()
             del self.contexts[group_id]
 
 
-xlang_header = """
-@required context;
-@required let;
-@required clear;
-
-iter := builtin::(container?, wrapper?) -> if (container == null or wrapper == null) {
-    return () -> false;
-} else {
-    return (container!, wrapper!, n => 0) -> {
-        if (n >= lengthof container) {
-            return false;
-        };
-        wrapper = container[n];
-        n = n + 1;
-        return true;
-    };
-};
-
-lazy_value := builtin::(expensive_computation?) -> {
-    if (valueof expensive_computation == null) {
-        expensive_computation()
-    } else {
-        valueof expensive_computation
-    }
-};
-
-Z := builtin::(f?) -> {
-    g := (x?) -> f((y?) -> x(x)(y));
-    return g(g);
-};
-
-stringify := builtin::(x?) -> ("%s" % (x,));
-
-repr := builtin::(x?) -> ("%r" % (x,));
-
-join_str := builtin::(tuple?, sep => ", ") -> {
-    i := 0;
-    result := "";
-    while (i < lengthof tuple) {
-        result = result + stringify(tuple[i]);
-        i = i + 1;
-        if (i < lengthof tuple) {
-            result = result + stringify(sep);
-        }
-    };
-    return result;
-};
-
-printable := builtin::(f?)->{
-    buffer := "";
-    print := (v?) -> {
-        buffer = buffer + stringify(v) + "\n";
-    };
-    result := f(print!);
-
-    return if (result == null) buffer else {
-        "%s\n%s" % (buffer, result)
-    }
-};
-"""
-
 class Plugin:
-
-    xlang_contexts = XLangContexts()
+    onion_contexts = OnionContexts()
 
     @staticmethod
     def help():
@@ -280,204 +235,61 @@ class Plugin:
                     )
                 raise plugin_context.SkipFollow()
 
-            xlang_py_trigger = "$"
-            if encoded_message.startswith(xlang_py_trigger):
-                xlang_code = encoded_message[len(xlang_py_trigger) :]
-                if xlang_code.strip() == "clear()":
-                    Plugin.xlang_contexts.remove_context(message["group_id"])
+            onion_trigger = "$"
+            if encoded_message.startswith(onion_trigger):
+                onion_code = encoded_message[len(onion_trigger) :]
+                if onion_code.strip() == "clear()":
+                    Plugin.onion_contexts.remove_context(message["group_id"])
                     await api.send_group_message(
-                        message["group_id"], "XLang-Py context cleared!"
+                        message["group_id"], "Onion context cleared!"
                     )
                     raise plugin_context.SkipFollow()
                 try:
 
-                    def execute():
-                        context = Plugin.xlang_contexts.get_context(message["group_id"])
-                        gc = context["gc"]
-
-                        is_error = False
-                        error = ""
-                        output = ""
-
-                        start_time = time.time()
-                        def run_condition():
-                            if time.time() - start_time > 3:
-                                raise RuntimeError("Execution timeout")
-                        xlang_lambda = gc.new_lambda()
-
+                    async def run_onion():
+                        context = Plugin.onion_contexts.get_context(message["group_id"])
+                        # 传递 context 变量
+                        onion_context = [
+                            PyOnionObject.named("let", context["wrapped_set"]),
+                            PyOnionObject.named("context", context["wrapped_get"]),
+                            PyOnionObject.named("clear", context["wrapped_clear"]),
+                        ]
                         try:
-                            xlang_lambda.load(
-                                code=xlang_header + f"""printable((print?)->{{
-{xlang_code}
-                                }})""",
-                                default_args=gc.new_tuple(
-                                    [
-                                        gc.new_named("let", context["wrapped_set"]),
-                                        gc.new_named("context", context["wrapped_get"]),
-                                        gc.new_named("clear", context["wrapped_clear"]),
-                                    ]
-                                ),
-                                run_condition=run_condition,
+                            result = await onion_eval_or_throw(
+                                f"""
+Modules := mut ();
+@required stdlib;
+@required let;
+@required context;
+
+{onion_code}""",
+                                work_dir=str(pathlib.Path(__file__).parent / "modules"),
+                                context=onion_context,
                             )
-                            result = xlang_lambda()
-                            if not isinstance(result, (type(None), VMNull)):
-                                output = str(result)
-                        except Exception as e:
-                            error += str(e) + "\n"
-                            is_error = True
-                        finally:
-                            # 确保释放 lambda 对象
-                            del xlang_lambda
-                            gc.collect()
-
-                        return {
-                            "output": output,
-                            "error": error,
-                            "is_error": is_error,
-                        }
-
-                    async def xlang_py_timeout_callback():
-                        await api.send_group_message(
-                            message["group_id"], "XLang-Py execution timeout!"
-                        )
-
-                    @plugin_context.timeout(
-                        10, timeout_callback=xlang_py_timeout_callback
-                    )
-                    async def run_xlang_py():
-                        # 创建一个任务在线程池中执行 XLang-Py 代码
-                        loop = asyncio.get_event_loop()
-                        result = await loop.run_in_executor(None, execute)
-
-                        if result["is_error"]:
-                            await api.send_group_message(
-                                message["group_id"],
-                                f"{result['error']}".strip(),
-                            )
-                        else:
-                            if result["output"] == "":
+                            output = str(result)
+                            if output.strip() == "" or output.strip() == "None":
                                 await api.send_group_message(
                                     message["group_id"], "Success!"
                                 )
                             else:
                                 await api.send_group_message(
-                                    message["group_id"], f"{result['output']}".strip()
+                                    message["group_id"], output.strip()
                                 )
+                        except OnionRuntimeError as e:
+                            await api.send_group_message(
+                                message["group_id"], f"Onion error: {e}"
+                            )
+                        except Exception as e:
+                            await api.send_group_message(
+                                message["group_id"], f"Failed to run onion: {e}"
+                            )
 
-                    await run_xlang_py()
-
+                    await run_onion()
                 except Exception as e:
                     await api.send_group_message(
-                        message["group_id"], f"Failed to run xlang-py:\n{str(e)}"
+                        message["group_id"], f"Failed to run onion:\n{str(e)}"
                     )
                     raise plugin_context.SkipFollow()
                 raise plugin_context.SkipFollow()
-
-            # xlang_trigger = "$"
-            # if encoded_message.startswith(xlang_trigger):
-            #     xlang = encoded_message[len(xlang_trigger):]
-            #     if xlang.strip() == "clear()":
-            #         Plugin.xlang_contexts.remove_context(message["group_id"])
-            #         await api.send_group_message(
-            #             message["group_id"], "XLang context cleared!"
-            #         )
-            #         raise plugin_context.SkipFollow()
-            #     try:
-
-            #         def execute():
-            #             context = Plugin.xlang_contexts.get_context(message["group_id"])
-
-            #             output_buffer = ""
-            #             error_buffer = ""
-            #             is_error = False
-
-            #             def safe_open(path, *args, **kwargs):
-            #                 if ".." in path:
-            #                     raise FileNotFoundError("Invalid path")
-            #                 return open(xlang_modules_path / path, *args, **kwargs)
-
-            #             def print_func(args):
-            #                 list_args = [arg.value for arg in args]
-            #                 output_printer(*list_args)
-            #                 return NoneType()
-
-            #             def input_func(args):
-            #                 return String(input_reader())
-
-            #             context["context"].get("print").func = print_func
-            #             context["context"].get("input").func = input_func
-
-            #             def output_printer(*args, sep=" ", end="\n"):
-            #                 nonlocal output_buffer
-            #                 output_buffer += sep.join(map(str, args)) + end
-
-            #             def input_reader(*args):
-            #                 return ""
-
-            #             def error_printer(*args, sep=" ", end="\n"):
-            #                 nonlocal error_buffer
-            #                 error_buffer += sep.join(map(str, args)) + end
-            #                 nonlocal is_error
-            #                 is_error = True
-
-            #             result = NoneType()
-
-            #             try:
-            #                 result = context["interpreter"].execute_with_context(
-            #                     xlang,
-            #                     context["context"],
-            #                     context["stack"],
-            #                     error_printer=error_printer,
-            #                     output_printer=output_printer,
-            #                     input_reader=input_reader,
-            #                     open_func=safe_open,
-            #                 )
-            #             except Exception as e:
-            #                 error_printer(str(e))
-            #                 is_error = True
-            #             finally:
-            #                 if not isinstance(result, NoneType):
-            #                     output_printer(str(result))
-
-            #             return {
-            #                 "output": output_buffer,
-            #                 "error": error_buffer,
-            #                 "is_error": is_error,
-            #             }
-
-            #         async def xlang_timeout_callback():
-            #             await api.send_group_message(
-            #                 message["group_id"], "XLang execution timeout!"
-            #             )
-
-            #         @plugin_context.timeout(10, timeout_callback=xlang_timeout_callback)
-            #         async def run_xlang():
-            #             # 创建一个任务在线程池中执行 XLang 代码
-            #             loop = asyncio.get_event_loop()
-            #             result = await loop.run_in_executor(None, execute)
-
-            #             if result["is_error"]:
-            #                 await api.send_group_message(
-            #                     message["group_id"],
-            #                     f"{result['error']}\nOutput:\n{result['output']}".strip(),
-            #                 )
-            #             else:
-            #                 if result["output"] == "":
-            #                     await api.send_group_message(
-            #                         message["group_id"], "Success!"
-            #                     )
-            #                 else:
-            #                     await api.send_group_message(
-            #                         message["group_id"], f"{result['output']}".strip()
-            #                     )
-
-            #         await run_xlang()
-
-            #     except Exception as e:
-            #         await api.send_group_message(
-            #             message["group_id"], f"Failed to run xlang:\n{str(e)}"
-            #         )
-            #         raise plugin_context.SkipFollow()
-            #     raise plugin_context.SkipFollow()
 
         await handler()
