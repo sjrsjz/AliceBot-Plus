@@ -47,35 +47,6 @@ tools_help = r"""
 - $ <onion>: 执行 Onion 代码。
 """
 
-
-# class XLangContexts:
-#     def __init__(self):
-#         self.contexts = {}
-
-#     def get_context(self, group_id):
-#         if group_id not in self.contexts:
-#             self.contexts[group_id] = {
-#                 "context": Context(),
-#                 "stack": [],
-#                 "interpreter": XLang(),
-#             }
-#             self.contexts[group_id]["context"].new_frame(
-#                 stack=self.contexts[group_id]["stack"], enter_func=True, hidden = True
-#             )
-#             self.contexts[group_id]["interpreter"].create_builtins_for_context(
-#                 self.contexts[group_id]["context"]
-#             )
-#             self.contexts[group_id]["context"].new_frame(
-#                 stack=self.contexts[group_id]["stack"], enter_func=True
-#             )
-#             log_func(f"XLang context created for group {group_id}")
-#         return self.contexts[group_id]
-
-#     def remove_context(self, group_id):
-#         if group_id in self.contexts:
-#             del self.contexts[group_id]
-
-
 # Onion 上下文管理
 class OnionContexts:
     def __init__(self):
@@ -245,7 +216,7 @@ class Plugin:
                     )
                     raise plugin_context.SkipFollow()
                 try:
-
+                    @plugin_context.timeout(10, timeout_callback=timeout_callback)
                     async def run_onion():
                         context = Plugin.onion_contexts.get_context(message["group_id"])
                         # 传递 context 变量

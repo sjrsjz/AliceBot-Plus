@@ -102,7 +102,7 @@ class ContextManager:
                 "context": message_codec_package["context"].ContextManager(context=[]),
                 "stream_context": message_codec_package["context"].StreamContextManager(
                     context=[],
-                    max_length=50,
+                    max_length=50,  # 您可以按需调整此值
                 ),
                 "ai_params": {
                     "system_instruction": get_default_system_instruction(),
@@ -126,6 +126,7 @@ class ContextManager:
 
     def write_to_temporary_file(self):
         with open(context_temp_file, "w", encoding="utf-8") as f:
+            # 数据结构现在自然地包含了 timestamp，直接写入即可
             group_context = {
                 str(k): {
                     "context": v["context"].context,
@@ -153,34 +154,70 @@ class ContextManager:
             )
 
     def read_from_temporary_file(self):
+        # <--- MODIFIED: 核心修改，兼容旧数据
         with open(context_temp_file, "r", encoding="utf-8") as f:
             context = fjson.decode(f.read())
             self.group_context = {}
             self.private_context = {}
-            self.group_context = {
-                str(k): {
+
+            # --- 处理群聊上下文 ---
+            for k, v in context["group_context"].items():
+                # 兼容性处理：检查并修复 context 中缺失时间戳的旧消息
+                upgraded_main_context = []
+                for i, msg in enumerate(v["context"]):
+                    if "timestamp" not in msg:
+                        # 为旧消息添加一个过去的伪时间戳，确保它们排在前面
+                        # 使用索引 i 来保证旧消息之间的相对顺序
+                        msg["timestamp"] = time.time() - (99999 - i)
+                    upgraded_main_context.append(msg)
+
+                # 兼容性处理：检查并修复 stream_context 中缺失时间戳或格式不正确的消息
+                upgraded_stream_context = []
+                stream_context_data = v.get(
+                    "stream_context", ([], 50)
+                )  # 兼容更老的文件格式
+                for msg in stream_context_data[0]:
+                    if "timestamp" not in msg:
+                        # 尝试从旧的 asctime 字符串转换
+                        if "time" in msg and isinstance(msg["time"], str):
+                            try:
+                                msg["timestamp"] = time.mktime(
+                                    time.strptime(msg["time"])
+                                )
+                            except ValueError:
+                                msg["timestamp"] = time.time() - 99999
+                        else:
+                            # 如果完全没有时间信息，也给一个过去的伪时间戳
+                            msg["timestamp"] = time.time() - 99999
+                    upgraded_stream_context.append(msg)
+
+                self.group_context[str(k)] = {
                     "context": message_codec_package["context"].ContextManager(
-                        context=v["context"]
+                        context=upgraded_main_context
                     ),
                     "stream_context": message_codec_package[
                         "context"
                     ].StreamContextManager(
-                        context=v["stream_context"][0],
-                        max_length=v["stream_context"][1],
+                        context=upgraded_stream_context,
+                        max_length=stream_context_data[1],
                     ),
                     "ai_params": v["ai_params"],
                 }
-                for k, v in context["group_context"].items()
-            }
-            self.private_context = {
-                str(k): {
+
+            # --- 处理私聊上下文 (同样需要兼容性处理) ---
+            for k, v in context["private_context"].items():
+                upgraded_private_context = []
+                for i, msg in enumerate(v["context"]):
+                    if "timestamp" not in msg:
+                        msg["timestamp"] = time.time() - (99999 - i)
+                    upgraded_private_context.append(msg)
+
+                self.private_context[str(k)] = {
                     "context": message_codec_package["context"].ContextManager(
-                        context=v["context"]
+                        context=upgraded_private_context
                     ),
                     "ai_params": v["ai_params"],
                 }
-                for k, v in context["private_context"].items()
-            }
 
     async def get_profile(self, user_id):
         group_profile_file = profile_path / f"user_{user_id}_profile.json"
@@ -201,14 +238,17 @@ class ContextManager:
     async def build_context(
         self,
         api,
-        context,
-        user_id,
-        user_message_id,
-        user_request,
-        stream_context,
-        group_id=None,
-    ):
-        _context = context.copy()
+        main_context: List[Dict],  # AI与用户的核心对话历史
+        user_id: int,
+        user_message_id: int,
+        user_request: str,
+        stream_context: Any,  # 群聊的流式消息历史
+        group_id: int = None,
+    ) -> tuple[List[Dict], str]:
+        """
+        通过按时间顺序合并主上下文和流式上下文来构建一个统一的、时序正确的对话历史。
+        """
+        final_context_for_ai = []
 
         async def build_header(
             user_id, user_message_id, user_sex, user_name, current=False
@@ -249,7 +289,7 @@ class ContextManager:
             autosave_str += f"{autosave['filename']} | {autosave['modify_time']}\n"
         autosave_str += "\n\n# Moreover, I should use `write_to_file` typesetting format to make my database fresh"
 
-        _context.insert(
+        final_context_for_ai.insert(
             0,
             {
                 "role": "assistant",
@@ -282,7 +322,7 @@ class ContextManager:
                     "```group member list\nmember count exceeds 500\n```"
                 )
 
-            _context.insert(
+            final_context_for_ai.insert(
                 0,
                 {
                     "role": "assistant",
@@ -290,36 +330,63 @@ class ContextManager:
                 },
             )
 
-        if stream_context:
-            stream_context_str = ""
-            for item in stream_context.get_message():
-                stream_context_str += f"""# [{item['role']} [CQ:at,qq={item['user_id']}], name: {item['name']}]({item['time']}, msgid: [CQ:reply,id={item['message_id']}]):\n{item['content']}\n\n---\n\n"""
-            _context.insert(
-                0,
+        # --- 步骤 2: 合并并排序所有对话历史 ---
+
+        merged_history = []
+
+        # 2a. 添加主对话历史 (AI和用户的直接互动)
+        merged_history.extend(main_context)
+
+        # 2b. 添加流式群聊历史
+        for item in stream_context.get_message():
+            # 将 stream_context 的消息格式转换为与 main_context 一致的格式
+            merged_history.append(
                 {
-                    "role": "user",
-                    "content": f"<|start_header|>system_tool_code_result<|end_header|># Group Message History Context (Multi-Users, Important):\n{stream_context_str}",
-                },
+                    "role": "user",  # 所有群聊消息都视为'user'发言
+                    "content": f"[{item['name']}]: {item['content']}",
+                    "timestamp": item["timestamp"],
+                    # 保留原始信息以便调试
+                    "original_stream_item": True,
+                }
             )
 
+        # 2c. 按时间戳对所有历史记录进行排序
+        # 这是实现时序正确的关键一步
+        merged_history.sort(key=lambda x: x.get("timestamp", 0.0))
+
+        # 2d. 将排序后的历史格式化并添加到最终上下文中
+        for item in merged_history:
+            # 忽略没有内容的无效条目
+            if not item.get("content"):
+                continue
+            final_context_for_ai.append(
+                {"role": item["role"], "content": item["content"]}
+            )
+
+        # --- 步骤 3: 添加当前用户的最终请求 ---
+        # 这必须是列表中的最后一条消息。
         user_info = await api.get_stranger_info(user_id)
         user_sex = user_info.get("sex", "unknown")
         user_name = user_info.get("nickname", "unknown")
 
-        header_for_request = await build_header(
-            user_id, user_message_id, user_sex, user_name
-        )
-        real_request = header_for_request + user_request  # Used for saving to history
+        # 用于存储到历史记录的完整请求头（保留了所有细节）
+        header_for_request = f'# User:`[CQ:at,qq={user_id}]`\n## msgid:`[CQ:reply,id={user_message_id}]`\n## Time:{time.asctime()}\n## User Sex:{user_sex}\n## User Name:"{user_name}"\n## User Request:\n'
+        real_request_for_history = header_for_request + user_request
 
+        # 传递给模型的当前用户提示（更简洁，突出重点）
+        current_user_profile = await self.get_profile(user_id)
         current_user_message_content = (
-            f"# Current User Profile:\n{profile}\n"
-            + await build_header(user_id, user_message_id, user_sex, user_name, True)
-            + user_request
+            f"# Current User (Talking to you now):\n"
+            f"## Name: {user_name} (ID: {user_id})\n"
+            f"## Their Request:\n{user_request}\n"
+            f"---(user profile)---\n{current_user_profile}"
         )
 
-        _context.append({"role": "user", "content": current_user_message_content})
+        final_context_for_ai.append(
+            {"role": "user", "content": current_user_message_content}
+        )
 
-        return _context, real_request
+        return final_context_for_ai, real_request_for_history
 
 
 # --- NEW: AGENT HELPER FUNCTIONS ---
@@ -1337,15 +1404,15 @@ Powered by ✨Gemini-Flash-2.0 via AutoGemini Agent
 
                 # --- AGENT INTEGRATION BLOCK ---
 
-                # 1. Build the full context using the existing, powerful build_context method.
+                # 1. Build the full context using the NEW, powerful build_context method.
                 full_context_list, real_request_for_history = (
                     await Plugin.context_manager.build_context(
                         api,
-                        group_context["context"].get_message(),
+                        group_context["context"].get_message(),  # 核心对话
                         message["user_id"],
                         message["message_id"],
                         user_message_for_agent,
-                        group_context["stream_context"],
+                        group_context["stream_context"],  # 群聊历史
                         group_id,
                     )
                 )
@@ -1430,16 +1497,20 @@ This context is crucial for understanding the conversation and providing relevan
                     )
 
                     # 10. Save the complete interaction to context manager.
+                    current_time = time.time()
                     group_context["context"].push_message(
                         {
                             "role": "user",
                             "content": real_request_for_history,
+                            "timestamp": current_time,  # <--- ADDED
                         }
                     )
                     group_context["context"].push_message(
                         {
                             "role": "assistant",
                             "content": final_response,
+                            "timestamp": current_time
+                            + 0.001,  # <--- ADDED (确保在用户消息之后)
                         }
                     )
                 except Exception as e:
@@ -1453,15 +1524,14 @@ This context is crucial for understanding the conversation and providing relevan
                 # --- END AGENT INTEGRATION BLOCK ---
 
             else:
-                # This part for non-triggered messages remains the same
                 group_context["stream_context"].push_message(
                     {
                         "role": "user",
                         "name": message["sender"]["nickname"],
                         "user_id": message["user_id"],
-                        "time": time.asctime(),
                         "message_id": message["message_id"],
                         "content": message_str,
+                        "timestamp": time.time(),
                     }
                 )
 
