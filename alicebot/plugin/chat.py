@@ -2,6 +2,7 @@
 
 import pathlib
 import fJson as fjson
+import json  # 新增：标准JSON支持
 import time
 import traceback
 import base64
@@ -64,7 +65,7 @@ example_typeset_package.load_module("QQBot", hot_reload=True, log_func=log_func)
 from autogemini.auto_stream_processor import create_cot_processor, CallbackMsgType
 from autogemini.tool_code import DefaultApi
 from autogemini.template import ToolCodeInfo, parse_agent_output
-from autogemini.gemini_chat import ChatMessage, MessageRole
+from autogemini.gemini_chat import ChatMessage, MessageRole, MediaFile
 
 # --- All original helper imports remain unchanged ---
 from plugin.util import online_py_executor
@@ -76,7 +77,8 @@ entity_name = "Chat"
 # --- All path definitions and ContextManager class remain unchanged ---
 context_temp_path = pathlib.Path(__file__).parent / "context_temp"
 context_temp_path.mkdir(parents=True, exist_ok=True)
-context_temp_file = context_temp_path / "context_temp.fjson"
+context_temp_file = context_temp_path / "context_temp.json"  # 新格式：JSON
+context_temp_file_legacy = context_temp_path / "context_temp.fjson"  # 旧格式：fJson
 profile_path = pathlib.Path(__file__).parent / "profiles"
 profile_path.mkdir(parents=True, exist_ok=True)
 
@@ -142,82 +144,181 @@ class ContextManager:
                 str(k): {"context": v["context"].context, "ai_params": v["ai_params"]}
                 for k, v in self.private_context.items()
             }
-            f.write(
-                fjson.encode(
-                    {
-                        "group_context": group_context,
-                        "private_context": private_context,
-                    },
-                    multi_line=True,
-                    indent=4,
-                )
+
+            # 使用标准JSON格式，性能更好，特别是对于大量图片数据
+            context_data = {
+                "group_context": group_context,
+                "private_context": private_context,
+            }
+
+            json.dump(
+                context_data, f, ensure_ascii=False, indent=2, separators=(",", ": ")
             )
 
     def read_from_temporary_file(self):
-        # <--- MODIFIED: 核心修改，兼容旧数据
-        with open(context_temp_file, "r", encoding="utf-8") as f:
-            context = fjson.decode(f.read())
+        # <--- ENHANCED: 支持从fJson迁移到JSON，提升性能
+        context = None
+
+        # 优先尝试读取新的JSON格式文件
+        if context_temp_file.exists():
+            try:
+                with open(context_temp_file, "r", encoding="utf-8") as f:
+                    context = json.load(f)
+                log_func("INFO", entity_name, "成功读取JSON格式的上下文文件")
+            except Exception as e:
+                log_func("ERROR", entity_name, f"读取JSON格式上下文文件失败: {e}")
+
+        # 如果JSON文件不存在或读取失败，尝试迁移旧的fJson文件
+        if context is None and context_temp_file_legacy.exists():
+            try:
+                log_func(
+                    "INFO", entity_name, "检测到旧版fJson格式，开始迁移到JSON格式..."
+                )
+                with open(context_temp_file_legacy, "r", encoding="utf-8") as f:
+                    context = fjson.decode(f.read())
+
+                # 迁移成功后，保存为新的JSON格式
+                if context is not None:
+                    log_func(
+                        "INFO", entity_name, "fJson读取成功，正在转换为JSON格式..."
+                    )
+
+                    # 临时存储数据以便写入
+                    temp_group_context = {}
+                    temp_private_context = {}
+
+                    # 处理群聊上下文
+                    for k, v in context["group_context"].items():
+                        upgraded_main_context = []
+                        for i, msg in enumerate(v["context"]):
+                            if "timestamp" not in msg:
+                                msg["timestamp"] = time.time() - (99999 - i)
+                            upgraded_main_context.append(msg)
+
+                        upgraded_stream_context = []
+                        stream_context_data = v.get("stream_context", ([], 50))
+                        for msg in stream_context_data[0]:
+                            if "timestamp" not in msg:
+                                if "time" in msg and isinstance(msg["time"], str):
+                                    try:
+                                        msg["timestamp"] = time.mktime(
+                                            time.strptime(msg["time"])
+                                        )
+                                    except ValueError:
+                                        msg["timestamp"] = time.time() - 99999
+                                else:
+                                    msg["timestamp"] = time.time() - 99999
+                            upgraded_stream_context.append(msg)
+
+                        temp_group_context[str(k)] = {
+                            "context": message_codec_package["context"].ContextManager(
+                                context=upgraded_main_context
+                            ),
+                            "stream_context": message_codec_package[
+                                "context"
+                            ].StreamContextManager(
+                                context=upgraded_stream_context,
+                                max_length=stream_context_data[1],
+                            ),
+                            "ai_params": v["ai_params"],
+                        }
+
+                    # 处理私聊上下文
+                    for k, v in context["private_context"].items():
+                        upgraded_private_context = []
+                        for i, msg in enumerate(v["context"]):
+                            if "timestamp" not in msg:
+                                msg["timestamp"] = time.time() - (99999 - i)
+                            upgraded_private_context.append(msg)
+
+                        temp_private_context[str(k)] = {
+                            "context": message_codec_package["context"].ContextManager(
+                                context=upgraded_private_context
+                            ),
+                            "ai_params": v["ai_params"],
+                        }
+
+                    # 设置临时上下文
+                    self.group_context = temp_group_context
+                    self.private_context = temp_private_context
+
+                    # 立即保存为JSON格式
+                    self.write_to_temporary_file()
+
+                    # 删除旧的fJson文件
+                    try:
+                        context_temp_file_legacy.unlink()
+                        log_func("INFO", entity_name, "成功删除旧版fJson文件，迁移完成")
+                    except Exception as e:
+                        log_func(
+                            "WARN",
+                            entity_name,
+                            f"删除旧版fJson文件失败，但不影响使用: {e}",
+                        )
+
+                    log_func("INFO", entity_name, "成功迁移到JSON格式，性能将显著提升")
+                    return  # 迁移完成，直接返回
+
+            except Exception as e:
+                log_func("ERROR", entity_name, f"迁移fJson文件失败: {e}")
+
+        # 如果没有任何文件或迁移失败，创建新的空上下文
+        if context is None:
+            log_func("INFO", entity_name, "未找到现有上下文文件，创建新的空上下文")
             self.group_context = {}
             self.private_context = {}
+            return
 
-            # --- 处理群聊上下文 ---
-            for k, v in context["group_context"].items():
-                # 兼容性处理：检查并修复 context 中缺失时间戳的旧消息
-                upgraded_main_context = []
-                for i, msg in enumerate(v["context"]):
-                    if "timestamp" not in msg:
-                        # 为旧消息添加一个过去的伪时间戳，确保它们排在前面
-                        # 使用索引 i 来保证旧消息之间的相对顺序
-                        msg["timestamp"] = time.time() - (99999 - i)
-                    upgraded_main_context.append(msg)
+        # 处理读取到的JSON格式数据
+        self.group_context = {}
+        self.private_context = {}
 
-                # 兼容性处理：检查并修复 stream_context 中缺失时间戳或格式不正确的消息
-                upgraded_stream_context = []
-                stream_context_data = v.get(
-                    "stream_context", ([], 50)
-                )  # 兼容更老的文件格式
-                for msg in stream_context_data[0]:
-                    if "timestamp" not in msg:
-                        # 尝试从旧的 asctime 字符串转换
-                        if "time" in msg and isinstance(msg["time"], str):
-                            try:
-                                msg["timestamp"] = time.mktime(
-                                    time.strptime(msg["time"])
-                                )
-                            except ValueError:
-                                msg["timestamp"] = time.time() - 99999
-                        else:
-                            # 如果完全没有时间信息，也给一个过去的伪时间戳
+        # 处理群聊上下文
+        for k, v in context["group_context"].items():
+            upgraded_main_context = []
+            for i, msg in enumerate(v["context"]):
+                if "timestamp" not in msg:
+                    msg["timestamp"] = time.time() - (99999 - i)
+                upgraded_main_context.append(msg)
+
+            upgraded_stream_context = []
+            stream_context_data = v.get("stream_context", ([], 50))
+            for msg in stream_context_data[0]:
+                if "timestamp" not in msg:
+                    if "time" in msg and isinstance(msg["time"], str):
+                        try:
+                            msg["timestamp"] = time.mktime(time.strptime(msg["time"]))
+                        except ValueError:
                             msg["timestamp"] = time.time() - 99999
-                    upgraded_stream_context.append(msg)
+                    else:
+                        msg["timestamp"] = time.time() - 99999
+                upgraded_stream_context.append(msg)
 
-                self.group_context[str(k)] = {
-                    "context": message_codec_package["context"].ContextManager(
-                        context=upgraded_main_context
-                    ),
-                    "stream_context": message_codec_package[
-                        "context"
-                    ].StreamContextManager(
-                        context=upgraded_stream_context,
-                        max_length=stream_context_data[1],
-                    ),
-                    "ai_params": v["ai_params"],
-                }
+            self.group_context[str(k)] = {
+                "context": message_codec_package["context"].ContextManager(
+                    context=upgraded_main_context
+                ),
+                "stream_context": message_codec_package["context"].StreamContextManager(
+                    context=upgraded_stream_context,
+                    max_length=stream_context_data[1],
+                ),
+                "ai_params": v["ai_params"],
+            }
 
-            # --- 处理私聊上下文 (同样需要兼容性处理) ---
-            for k, v in context["private_context"].items():
-                upgraded_private_context = []
-                for i, msg in enumerate(v["context"]):
-                    if "timestamp" not in msg:
-                        msg["timestamp"] = time.time() - (99999 - i)
-                    upgraded_private_context.append(msg)
+        # 处理私聊上下文
+        for k, v in context["private_context"].items():
+            upgraded_private_context = []
+            for i, msg in enumerate(v["context"]):
+                if "timestamp" not in msg:
+                    msg["timestamp"] = time.time() - (99999 - i)
+                upgraded_private_context.append(msg)
 
-                self.private_context[str(k)] = {
-                    "context": message_codec_package["context"].ContextManager(
-                        context=upgraded_private_context
-                    ),
-                    "ai_params": v["ai_params"],
-                }
+            self.private_context[str(k)] = {
+                "context": message_codec_package["context"].ContextManager(
+                    context=upgraded_private_context
+                ),
+                "ai_params": v["ai_params"],
+            }
 
     async def get_profile(self, user_id):
         group_profile_file = profile_path / f"user_{user_id}_profile.json"
@@ -283,11 +384,11 @@ class ContextManager:
             return result
 
         autosaves = await get_autosaves_file_informations()
-        autosave_str = "<|start_header|>think_before_new_cycle<|end_header|>\n# here are my files saved in the past, I will use them as datebase to answer questions:\n"
+        autosave_str = "<|start_header|>think_before_new_iteration<|end_header|>\n# here are my files saved in the past, I will use them as datebase to answer questions:\n"
         autosave_str += "filename | modify time\n --- | --- \n"
         for autosave in autosaves:
             autosave_str += f"{autosave['filename']} | {autosave['modify_time']}\n"
-        autosave_str += "\n\n# Moreover, I should use `write_to_file` typesetting format to make my database fresh"
+        autosave_str += "\n\n# Moreover, I should use `write_to_file` tool to make my database fresh"
 
         final_context_for_ai.insert(
             0,
@@ -326,7 +427,7 @@ class ContextManager:
                 0,
                 {
                     "role": "assistant",
-                    "content": f"<|start_header|>system_tool_code_result<|end_header|># Group Member List:\n{formatted_member_list}",
+                    "content": f"<|start_header|>tool_code_result_from_system<|end_header|># Group Member List:\n{formatted_member_list}",
                 },
             )
 
@@ -340,15 +441,21 @@ class ContextManager:
         # 2b. 添加流式群聊历史
         for item in stream_context.get_message():
             # 将 stream_context 的消息格式转换为与 main_context 一致的格式
-            merged_history.append(
-                {
-                    "role": "user",  # 所有群聊消息都视为'user'发言
-                    "content": f"[{item['name']}]: {item['content']}",
-                    "timestamp": item["timestamp"],
-                    # 保留原始信息以便调试
-                    "original_stream_item": True,
-                }
-            )
+            merged_item = {
+                "role": "user",  # 所有群聊消息都视为'user'发言
+                "content": f"[{item['name']}]: {item['content']}",
+                "timestamp": item["timestamp"],
+                # 保留原始信息以便调试
+                "original_stream_item": True,
+            }
+
+            # 重要：如果流式消息中包含媒体文件，需要保留它们
+            if "media_files" in item and item["media_files"]:
+                merged_item["media_files"] = item["media_files"]
+                # 记录调试信息
+                log_func("DEBUG", entity_name, f"Stream message contains {len(item['media_files'])} media files")
+
+            merged_history.append(merged_item)
 
         # 2c. 按时间戳对所有历史记录进行排序
         # 这是实现时序正确的关键一步
@@ -359,9 +466,16 @@ class ContextManager:
             # 忽略没有内容的无效条目
             if not item.get("content"):
                 continue
-            final_context_for_ai.append(
-                {"role": item["role"], "content": item["content"]}
-            )
+
+            # 构建上下文项目，保留媒体文件信息
+            context_item = {"role": item["role"], "content": item["content"]}
+
+            # 重要：如果项目包含媒体文件，需要保留它们
+            if "media_files" in item and item["media_files"]:
+                context_item["media_files"] = item["media_files"]
+                log_func("DEBUG", entity_name, f"Preserving {len(item['media_files'])} media files in final context")
+
+            final_context_for_ai.append(context_item)
 
         # --- 步骤 3: 添加当前用户的最终请求 ---
         # 这必须是列表中的最后一条消息。
@@ -376,7 +490,7 @@ class ContextManager:
         # 传递给模型的当前用户提示（更简洁，突出重点）
         current_user_profile = await self.get_profile(user_id)
         current_user_message_content = (
-            f"# Current User (Talking to you now):\n"
+            f"# Current User (Talking to A.I.(you) now):\n"
             f"## Name: {user_name} (ID: {user_id})\n"
             f"## Their Request:\n{user_request}\n"
             f"---(user profile)---\n{current_user_profile}"
@@ -831,9 +945,150 @@ def convert_history_to_chat_messages(history: List[dict]) -> List[ChatMessage]:
             )  # The agent's own responses are tagged as 'model'
 
         if role and "content" in item:
-            chat_messages.append(ChatMessage(role=role, content=str(item["content"])))
+            chat_message = ChatMessage(role=role, content=str(item["content"]))
+
+            # 处理可能包含的图片信息（向前兼容）
+            # 检查content中是否包含图片base64数据或其他媒体信息
+            if "media_files" in item:
+                log_func("DEBUG", entity_name, f"Processing {len(item['media_files'])} media files from history item")
+                # 新格式：直接包含媒体文件信息
+                for i, media_info in enumerate(item["media_files"]):
+                    try:
+                        log_func("DEBUG", entity_name, f"Processing media file {i}: {media_info.keys()}")
+                        if "data" in media_info and "mime_type" in media_info:
+                            # 如果是base64编码的数据，需要解码
+                            media_data = media_info["data"]
+                            log_func("DEBUG", entity_name, f"Media data type: {type(media_data)}, length: {len(media_data) if isinstance(media_data, str) else 'not string'}")
+                            
+                            if isinstance(media_data, str):
+                                import base64
+                                try:
+                                    media_data = base64.b64decode(media_data)
+                                    log_func("DEBUG", entity_name, f"Successfully decoded base64, binary length: {len(media_data)}")
+                                except Exception as decode_error:
+                                    log_func("ERROR", entity_name, f"Base64 decode failed: {decode_error}")
+                                    continue
+
+                            media_file = MediaFile(
+                                data=media_data, mime_type=media_info["mime_type"]
+                            )
+                            chat_message.media_files.append(media_file)
+                            log_func("INFO", entity_name, f"Successfully added media file to chat message: {media_info['mime_type']}")
+                        else:
+                            log_func("WARN", entity_name, f"Media file missing data or mime_type: {media_info.keys()}")
+                    except Exception as e:
+                        log_func(
+                            "WARN",
+                            entity_name,
+                            f"Failed to process media file in history: {e}",
+                        )
+                        import traceback
+                        log_func("DEBUG", entity_name, f"Media file processing traceback: {traceback.format_exc()}")
+
+            chat_messages.append(chat_message)
 
     return chat_messages
+
+
+async def extract_media_from_message(
+    message_data: List[dict],
+) -> tuple[str, List[dict]]:
+    """
+    从消息中提取文本和媒体文件。
+    返回: (纯文本内容, 媒体文件列表)
+    """
+    text_content = ""
+    media_files = []
+
+    for item in message_data:
+        if item["type"] == "text":
+            text_content += item["data"]["text"]
+        elif item["type"] == "image":
+            try:
+                media_info = {}
+
+                if "base64" in item["data"]:
+                    # 处理base64编码的图片
+                    img_base64 = item["data"]["base64"]
+                    img_data = base64.b64decode(img_base64)
+
+                    # 尝试检测MIME类型
+                    if img_data.startswith(b"\xff\xd8\xff"):
+                        mime_type = "image/jpeg"
+                    elif img_data.startswith(b"\x89PNG\r\n\x1a\n"):
+                        mime_type = "image/png"
+                    elif img_data.startswith(b"GIF8"):
+                        mime_type = "image/gif"
+                    elif img_data.startswith(b"RIFF") and b"WEBP" in img_data[:12]:
+                        mime_type = "image/webp"
+                    else:
+                        mime_type = "image/jpeg"  # 默认假设为jpeg
+
+                    media_info = {
+                        "data": img_base64,  # 保持base64格式便于存储
+                        "mime_type": mime_type,
+                        "source": "base64",
+                    }
+
+                    log_func(
+                        "DEBUG",
+                        entity_name,
+                        f"Extracted image: {mime_type}, base64 length: {len(img_base64)}",
+                    )
+
+                elif "url" in item["data"]:
+                    # 处理URL图片
+                    url = item["data"]["url"]
+                    try:
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(url, timeout=30) as response:
+                                if response.status == 200:
+                                    img_data = await response.read()
+                                    img_base64 = base64.b64encode(img_data).decode()
+
+                                    content_type = response.headers.get(
+                                        "Content-Type", "image/jpeg"
+                                    )
+
+                                    media_info = {
+                                        "data": img_base64,
+                                        "mime_type": content_type,
+                                        "source": "url",
+                                        "url": url,
+                                    }
+                                else:
+                                    log_func(
+                                        "WARN",
+                                        entity_name,
+                                        f"Failed to download image from {url}, status: {response.status}",
+                                    )
+                                    continue
+                    except Exception as e:
+                        log_func(
+                            "WARN",
+                            entity_name,
+                            f"Failed to download image from {url}: {e}",
+                        )
+                        continue
+
+                if media_info:
+                    media_files.append(media_info)
+
+            except Exception as e:
+                log_func("WARN", entity_name, f"Failed to process image: {e}")
+                continue
+        elif item["type"] == "at":
+            # 保留@信息
+            text_content += f"[CQ:at,qq={item['data']['qq']}]"
+        else:
+            # 其他类型的消息，转换为CQ码格式
+            cq_code = f"[CQ:{item['type']},"
+            for key, value in item["data"].items():
+                cq_code += f"{key}={value},"
+            cq_code = cq_code.rstrip(",") + "]"
+            text_content += cq_code
+
+    return text_content.strip(), media_files
 
 
 # --- END AGENT HELPER FUNCTIONS ---
@@ -1229,6 +1484,9 @@ Powered by ✨Gemini-Flash-2.0 via AutoGemini Agent
         with Plugin.lock:
             log_func("INFO", entity_name, "Writing context to temporary file...")
             Plugin.context_manager.write_to_temporary_file()
+            log_func(
+                "INFO", entity_name, "Context written to temporary file successfully."
+            )
 
     @staticmethod
     def after_reload():
@@ -1236,6 +1494,9 @@ Powered by ✨Gemini-Flash-2.0 via AutoGemini Agent
             log_func("INFO", entity_name, "Reading context from temporary file...")
             Plugin.context_manager = ContextManager()
             Plugin.context_manager.read_from_temporary_file()
+            log_func(
+                "INFO", entity_name, "Context read from temporary file successfully."
+            )
 
     @staticmethod
     def _test_if_being_at(message, bot_qq):
@@ -1364,10 +1625,9 @@ Powered by ✨Gemini-Flash-2.0 via AutoGemini Agent
                 message, lambda x: api.send_group_message(group_id, x), group_context
             )
 
-            message_str = await message_codec_package[
-                "codec"
-            ].encode_message_to_CQ_without_At_self_and_Image_tag(
-                message["message"], message["self_id"]
+            # 使用优化的消息处理，避免冗余的图片转文本
+            message_text_for_trigger, _ = await extract_media_from_message(
+                message["message"]
             )
 
             def check_trigger(message):
@@ -1386,7 +1646,7 @@ Powered by ✨Gemini-Flash-2.0 via AutoGemini Agent
 
             if Plugin._test_if_being_at(
                 message["message"], message["self_id"]
-            ) or check_trigger(message_str):
+            ) or check_trigger(message_text_for_trigger):
                 await limited_handler()
 
                 log_func(
@@ -1396,13 +1656,24 @@ Powered by ✨Gemini-Flash-2.0 via AutoGemini Agent
                     group_id, "我正在思考如何回复你 (Agent模式)..."
                 )
 
-                user_message_for_agent = await message_codec_package[
-                    "codec"
-                ].encode_message_to_CQ_without_At_self_and_Image(
-                    message["message"], message["self_id"]
-                )
-
                 # --- AGENT INTEGRATION BLOCK ---
+
+                # 调试：检查原始消息内容
+                log_func("DEBUG", entity_name, f"Original message data: {message['message']}")
+
+                # 0. 提取当前消息中的媒体文件（包含文本和图片）
+                current_message_text, current_media_files = (
+                    await extract_media_from_message(message["message"])
+                )
+                
+                # 调试：检查提取的媒体文件
+                log_func("DEBUG", entity_name, f"Extracted message text: {current_message_text}")
+                log_func("DEBUG", entity_name, f"Extracted media files count: {len(current_media_files) if current_media_files else 0}")
+                if current_media_files:
+                    for i, media_info in enumerate(current_media_files):
+                        log_func("DEBUG", entity_name, f"Media file {i}: type={media_info.get('mime_type', 'unknown')}, data_length={len(media_info.get('data', ''))}")
+                else:
+                    log_func("WARN", entity_name, "No media files extracted from message")
 
                 # 1. Build the full context using the NEW, powerful build_context method.
                 full_context_list, real_request_for_history = (
@@ -1411,7 +1682,7 @@ Powered by ✨Gemini-Flash-2.0 via AutoGemini Agent
                         group_context["context"].get_message(),  # 核心对话
                         message["user_id"],
                         message["message_id"],
-                        user_message_for_agent,
+                        current_message_text,  # 使用提取的纯文本（不包含图片转文本）
                         group_context["stream_context"],  # 群聊历史
                         group_id,
                     )
@@ -1422,7 +1693,22 @@ Powered by ✨Gemini-Flash-2.0 via AutoGemini Agent
                 current_user_prompt = current_user_message_dict.get("content", "")
 
                 # 3. Convert the rest of the list into the agent's history format.
+                log_func("DEBUG", entity_name, f"Converting {len(full_context_list)} history items to ChatMessages")
+                for i, item in enumerate(full_context_list):
+                    if "media_files" in item:
+                        log_func("DEBUG", entity_name, f"History item {i} has media_files: {len(item['media_files'])}")
+                    else:
+                        log_func("DEBUG", entity_name, f"History item {i} has no media_files")
+                
                 agent_history = convert_history_to_chat_messages(full_context_list)
+                
+                # 调试：检查历史记录中的媒体文件
+                media_count_in_history = 0
+                for i, chat_msg in enumerate(agent_history):
+                    if chat_msg.media_files:
+                        media_count_in_history += len(chat_msg.media_files)
+                        log_func("DEBUG", entity_name, f"History message {i}: {len(chat_msg.media_files)} media files")
+                log_func("DEBUG", entity_name, f"Total media files in history: {media_count_in_history}")
 
                 # 4. Prepare the agent by creating its tools and API handler.
                 agent_api_handler = await create_agent_api_handler()
@@ -1449,12 +1735,14 @@ This context is crucial for understanding the conversation and providing relevan
                     api_key=gemini_api_key,
                     default_api=agent_api_handler,
                     tool_codes=agent_tool_codes,
-                    character_description=addtitional_prompt + "\n" + group_context["ai_params"][
-                        "system_instruction"
-                    ],
+                    character_description=addtitional_prompt
+                    + "\n"
+                    + group_context["ai_params"]["system_instruction"],
                     respond_tags_description=CUSTOM_TAGS_PROMPT,
                     model="gemini-2.5-flash",
                     temperature=1.0,
+                    max_tokens=16384,
+                    api_delay=5.0
                 )
 
                 # 6. Load the conversation history into the agent.
@@ -1464,11 +1752,72 @@ This context is crucial for understanding the conversation and providing relevan
                 async def stream_callback(chunk: Any, msg_type: CallbackMsgType):
                     log_func("DEBUG", f"Agent-{msg_type.name}", str(chunk))
 
-                # 8. Run the agent's processing loop.
+                # 8. 创建包含媒体文件的当前用户消息
+                current_user_chat_message = ChatMessage(
+                    role=MessageRole.USER, content=current_user_prompt
+                )
+
+                # 添加媒体文件到当前消息
+                for media_info in current_media_files:
+                    try:
+                        media_data = base64.b64decode(media_info["data"])
+                        media_file = MediaFile(
+                            data=media_data, mime_type=media_info["mime_type"]
+                        )
+                        current_user_chat_message.media_files.append(media_file)
+                        log_func(
+                            "INFO",
+                            entity_name,
+                            f"Added media file to message: {media_info['mime_type']}, size: {len(media_data)} bytes",
+                        )
+                    except Exception as e:
+                        log_func("WARN", entity_name, f"Failed to add media file: {e}")
+                        import traceback
+
+                        log_func(
+                            "DEBUG",
+                            entity_name,
+                            f"Media file error traceback: {traceback.format_exc()}",
+                        )
+
+                # 调试：验证媒体文件是否正确添加
+                if current_user_chat_message.media_files:
+                    log_func(
+                        "INFO",
+                        entity_name,
+                        f"Total media files in message: {len(current_user_chat_message.media_files)}",
+                    )
+                    for i, mf in enumerate(current_user_chat_message.media_files):
+                        log_func(
+                            "INFO",
+                            entity_name,
+                            f"Media file {i}: {mf.mime_type}, data length: {len(mf.data) if mf.data else 0}",
+                        )
+                else:
+                    log_func(
+                        "WARN",
+                        entity_name,
+                        "No media files were successfully added to the message",
+                    )
+
+                # 9. Run the agent's processing loop with media support.
                 try:
-                    log_func("INFO", entity_name, "Starting agent processing...")
-                    final_response = await processor.process_conversation(
-                        current_user_prompt,
+                    log_func(
+                        "INFO",
+                        entity_name,
+                        "Starting agent processing with media support...",
+                    )
+
+                    # 仿照_process_with_toolcode_loop，直接添加包含媒体文件的消息到历史记录
+                    processor.history.append(current_user_chat_message)
+
+                    # 重置处理状态
+                    processor.current_response = ""
+                    processor.processing_complete = False
+                    
+
+                    # 直接调用_process_with_toolcode_loop进行处理
+                    final_response = await processor._process_with_toolcode_loop(
                         callback=stream_callback,
                         tool_code_timeout=90.0,
                     )
@@ -1498,13 +1847,25 @@ This context is crucial for understanding the conversation and providing relevan
 
                     # 10. Save the complete interaction to context manager.
                     current_time = time.time()
-                    group_context["context"].push_message(
-                        {
-                            "role": "user",
-                            "content": real_request_for_history,
-                            "timestamp": current_time,  # <--- ADDED
-                        }
-                    )
+
+                    # 构造包含媒体文件的用户消息记录
+                    user_message_record = {
+                        "role": "user",
+                        "content": real_request_for_history,
+                        "timestamp": current_time,
+                    }
+
+                    # 如果有媒体文件，保存媒体信息（为了向前兼容）
+                    if current_media_files:
+                        user_message_record["media_files"] = current_media_files
+                        log_func(
+                            "INFO",
+                            entity_name,
+                            f"Saved {len(current_media_files)} media files to context",
+                        )
+
+                    group_context["context"].push_message(user_message_record)
+
                     group_context["context"].push_message(
                         {
                             "role": "assistant",
@@ -1524,16 +1885,25 @@ This context is crucial for understanding the conversation and providing relevan
                 # --- END AGENT INTEGRATION BLOCK ---
 
             else:
-                group_context["stream_context"].push_message(
-                    {
-                        "role": "user",
-                        "name": message["sender"]["nickname"],
-                        "user_id": message["user_id"],
-                        "message_id": message["message_id"],
-                        "content": message_str,
-                        "timestamp": time.time(),
-                    }
+                # 处理非触发消息，添加到流式上下文
+                stream_message_text, stream_media_files = (
+                    await extract_media_from_message(message["message"])
                 )
+
+                stream_message_record = {
+                    "role": "user",
+                    "name": message["sender"]["nickname"],
+                    "user_id": message["user_id"],
+                    "message_id": message["message_id"],
+                    "content": stream_message_text,
+                    "timestamp": time.time(),
+                }
+
+                # 如果有媒体文件，也保存到流式上下文中（虽然不会传递给AI，但保持完整性）
+                if stream_media_files:
+                    stream_message_record["media_files"] = stream_media_files
+
+                group_context["stream_context"].push_message(stream_message_record)
 
         try:
             await handler()
