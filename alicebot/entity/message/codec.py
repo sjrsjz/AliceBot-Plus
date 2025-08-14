@@ -14,9 +14,6 @@ from loader import moduleloader
 
 aibackend_package = moduleloader.ModuleLoader(str(pathlib.Path(__file__).parent.parent.parent / "aibackend"),
                                               log_func=log_func)
-gemini = aibackend_package.load_module("gemini", hot_reload=True, log_func=log_func)
-
-
 async def encode_message_to_CQ(message):
     encoded_message = ""
     for x in message:
@@ -46,39 +43,7 @@ async def encode_message_to_CQ_without_At_self(message, bot_qq):
             encoded_message = encoded_message[:-1] + "]"
     return encoded_message
 
-
 async def encode_message_to_CQ_without_At_self_and_Image(message, bot_qq):
-    encoded_message = ""
-    for x in message:
-        if x["type"] == "text":
-            encoded_message += x["data"]["text"]
-        else:
-            if x["type"] == "at" and x["data"]["qq"] == str(bot_qq):
-                continue
-            if x["type"] == "image":
-                if "base64" in x["data"]:
-                    img = x["data"]["base64"]
-                    # decode
-                    img = base64.b64decode(img)
-                    tag = await aibackend_package['gemini'].image_to_text(img)
-                    encoded_message += f" <Image:prompt=\"{tag}\"> "
-                elif "url" in x["data"]:
-                    url = x["data"]["url"]
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(url) as response:
-                            img = await response.read()
-                    tag = await aibackend_package['gemini'].image_to_text(img)
-                    encoded_message += f" <Image:prompt=\"{tag}\"> "
-                continue
-            encoded_message += f"[CQ:{x['type']},"
-            for key, value in x["data"].items():
-                if key != "type":
-                    encoded_message += f"{key}={value},"
-            encoded_message = encoded_message[:-1] + "]"
-    return encoded_message
-
-
-async def encode_message_to_CQ_without_At_self_and_Image_tag(message, bot_qq):
     encoded_message = ""
     for x in message:
         if x["type"] == "text":

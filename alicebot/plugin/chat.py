@@ -37,7 +37,6 @@ message_codec_package.load_module("context", hot_reload=True, log_func=log_func)
 aibackend_package = moduleloader.ModuleLoader(
     plugin_context.aibackend_package_path, log_func=log_func
 )
-aibackend_package.load_module("gemini", hot_reload=True, log_func=log_func)
 aibackend_package.load_module("tts", hot_reload=True, log_func=log_func)
 aibackend_package.load_module("aipaint", hot_reload=True, log_func=log_func)
 aibackend_package.load_module("apikey", hot_reload=True, log_func=log_func)
@@ -61,20 +60,17 @@ example_typeset_package = moduleloader.ModuleLoader(
 example_typeset_package.load_module("QQBot", hot_reload=True, log_func=log_func)
 
 
-# --- NEW: Agent-related imports from autogemini library ---
 from autogemini.auto_stream_processor import create_cot_processor, CallbackMsgType
 from autogemini.tool_code import DefaultApi
 from autogemini.template import ToolCodeInfo, parse_agent_output
 from autogemini.gemini_chat import ChatMessage, MessageRole, MediaFile
 
-# --- All original helper imports remain unchanged ---
 from plugin.util import online_py_executor
 from plugin.util import mathworld
 
 
 entity_name = "Chat"
 
-# --- All path definitions and ContextManager class remain unchanged ---
 context_temp_path = pathlib.Path(__file__).parent / "context_temp"
 context_temp_path.mkdir(parents=True, exist_ok=True)
 context_temp_file = context_temp_path / "context_temp.json"  # 新格式：JSON
@@ -83,7 +79,6 @@ profile_path = pathlib.Path(__file__).parent / "profiles"
 profile_path.mkdir(parents=True, exist_ok=True)
 
 
-# ... (ContextManager class and its methods like get_group_context, build_context, etc. are here, UNCHANGED)
 def get_default_system_instruction():
     return example_prompt_package["Alice"].character
 
@@ -93,7 +88,6 @@ def get_gemini_key():
 
 
 class ContextManager:
-    # ... (The entire ContextManager class is here, UNCHANGED)
     def __init__(self):
         self.group_context = {}
         self.private_context = {}
@@ -156,7 +150,6 @@ class ContextManager:
             )
 
     def read_from_temporary_file(self):
-        # <--- ENHANCED: 支持从fJson迁移到JSON，提升性能
         context = None
 
         # 优先尝试读取新的JSON格式文件
@@ -351,16 +344,6 @@ class ContextManager:
         """
         final_context_for_ai = []
 
-        async def build_header(
-            user_id, user_message_id, user_sex, user_name, current=False
-        ):
-            return (
-                ("# Current User(Talking to the assistant):" if current else "# User:")
-                + f'`[CQ:at,qq={user_id}]`\n## msgid:`[CQ:reply,id={user_message_id}]`\n## Time:{time.asctime()}\n## User Sex:{user_sex}\n## User Name:"{user_name}"\n## User Request:\n'
-            )
-
-        profile = await self.get_profile(user_id)
-
         async def get_autosaves_file_informations():
             files = os.listdir(profile_path)
             result = []
@@ -453,7 +436,11 @@ class ContextManager:
             if "media_files" in item and item["media_files"]:
                 merged_item["media_files"] = item["media_files"]
                 # 记录调试信息
-                log_func("DEBUG", entity_name, f"Stream message contains {len(item['media_files'])} media files")
+                log_func(
+                    "DEBUG",
+                    entity_name,
+                    f"Stream message contains {len(item['media_files'])} media files",
+                )
 
             merged_history.append(merged_item)
 
@@ -473,7 +460,11 @@ class ContextManager:
             # 重要：如果项目包含媒体文件，需要保留它们
             if "media_files" in item and item["media_files"]:
                 context_item["media_files"] = item["media_files"]
-                log_func("DEBUG", entity_name, f"Preserving {len(item['media_files'])} media files in final context")
+                log_func(
+                    "DEBUG",
+                    entity_name,
+                    f"Preserving {len(item['media_files'])} media files in final context",
+                )
 
             final_context_for_ai.append(context_item)
 
@@ -501,9 +492,6 @@ class ContextManager:
         )
 
         return final_context_for_ai, real_request_for_history
-
-
-# --- NEW: AGENT HELPER FUNCTIONS ---
 
 
 class Danbooru:
@@ -934,6 +922,10 @@ def _is_disallowed_url(url: str) -> bool:
 
 def convert_history_to_chat_messages(history: List[dict]) -> List[ChatMessage]:
     """Converts the plugin's dictionary-based history to the agent's ChatMessage format."""
+
+    # AutoGemini支持的媒体类型
+    SUPPORTED_MEDIA_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+
     chat_messages: List[ChatMessage] = []
     for item in history:
         role = None
@@ -950,40 +942,81 @@ def convert_history_to_chat_messages(history: List[dict]) -> List[ChatMessage]:
             # 处理可能包含的图片信息（向前兼容）
             # 检查content中是否包含图片base64数据或其他媒体信息
             if "media_files" in item:
-                log_func("DEBUG", entity_name, f"Processing {len(item['media_files'])} media files from history item")
+                log_func(
+                    "DEBUG",
+                    entity_name,
+                    f"Processing {len(item['media_files'])} media files from history item",
+                )
                 # 新格式：直接包含媒体文件信息
                 for i, media_info in enumerate(item["media_files"]):
                     try:
-                        log_func("DEBUG", entity_name, f"Processing media file {i}: {media_info.keys()}")
+                        log_func(
+                            "DEBUG",
+                            entity_name,
+                            f"Processing media file {i}: {media_info.keys()}",
+                        )
                         if "data" in media_info and "mime_type" in media_info:
+                            mime_type = media_info["mime_type"]
+
+                            # 检查媒体类型是否被支持
+                            if mime_type not in SUPPORTED_MEDIA_TYPES:
+                                log_func(
+                                    "WARN",
+                                    entity_name,
+                                    f"Skipping unsupported media type: {mime_type}",
+                                )
+                                continue
+
                             # 如果是base64编码的数据，需要解码
                             media_data = media_info["data"]
-                            log_func("DEBUG", entity_name, f"Media data type: {type(media_data)}, length: {len(media_data) if isinstance(media_data, str) else 'not string'}")
-                            
+                            log_func(
+                                "DEBUG",
+                                entity_name,
+                                f"Media data type: {type(media_data)}, length: {len(media_data) if isinstance(media_data, str) else 'not string'}",
+                            )
+
                             if isinstance(media_data, str):
                                 import base64
+
                                 try:
                                     media_data = base64.b64decode(media_data)
-                                    log_func("DEBUG", entity_name, f"Successfully decoded base64, binary length: {len(media_data)}")
+                                    log_func(
+                                        "DEBUG",
+                                        entity_name,
+                                        f"Successfully decoded base64, binary length: {len(media_data)}",
+                                    )
                                 except Exception as decode_error:
-                                    log_func("ERROR", entity_name, f"Base64 decode failed: {decode_error}")
+                                    log_func(
+                                        "ERROR",
+                                        entity_name,
+                                        f"Base64 decode failed: {decode_error}",
+                                    )
                                     continue
 
-                            media_file = MediaFile(
-                                data=media_data, mime_type=media_info["mime_type"]
-                            )
+                            media_file = MediaFile(data=media_data, mime_type=mime_type)
                             chat_message.media_files.append(media_file)
-                            log_func("INFO", entity_name, f"Successfully added media file to chat message: {media_info['mime_type']}")
+                            log_func(
+                                "INFO",
+                                entity_name,
+                                f"Successfully added media file to chat message: {mime_type}",
+                            )
                         else:
-                            log_func("WARN", entity_name, f"Media file missing data or mime_type: {media_info.keys()}")
+                            log_func(
+                                "WARN",
+                                entity_name,
+                                f"Media file missing data or mime_type: {media_info.keys()}",
+                            )
                     except Exception as e:
                         log_func(
                             "WARN",
                             entity_name,
                             f"Failed to process media file in history: {e}",
                         )
-                        import traceback
-                        log_func("DEBUG", entity_name, f"Media file processing traceback: {traceback.format_exc()}")
+                        log_func(
+                            "DEBUG",
+                            entity_name,
+                            f"Media file processing traceback: {traceback.format_exc()}",
+                        )
 
             chat_messages.append(chat_message)
 
@@ -1162,7 +1195,7 @@ Your entire final response must be composed using a sequence of the tags describ
 """
 
 
-def get_typeset_handler(api, browser, template):
+def get_typeset_handler(api, browser):
     def escape_html(text: str) -> str:
         """Escapes HTML special characters in the text."""
         return (
@@ -1173,14 +1206,14 @@ def get_typeset_handler(api, browser, template):
             .replace("'", "&#39;")
         )
 
-    async def handle_shut_up(x: dict, group_id: int, **kwargs) -> tuple[str, str]:
+    async def handle_shut_up(x: dict, group_id: int) -> tuple[str, str]:
         user = x["user_id"]
         time = x["minutes"]
         time = 10 if time > 10 else (time if time > 0 else 1)
         await api.set_group_ban(group_id, user, time * 60)
         return f" 已禁言[CQ:at,qq={user}]{time}分钟 "
 
-    async def handle_tts(x: dict, **kwargs) -> str:
+    async def handle_tts(x: dict) -> str:
         text = x["text"]
         emotion = x.get("emotion", "")
         log_func("INFO", entity_name, f"Text to speech: {text}")
@@ -1188,7 +1221,7 @@ def get_typeset_handler(api, browser, template):
         result = base64.b64encode(result).decode()
         return f"[CQ:record,file=base64://{result}]"
 
-    async def handle_wolfram(x: dict, markdown: bool, **kwargs) -> str:
+    async def handle_wolfram(x: dict, markdown: bool) -> str:
         cal = x["script"]
         result = await document_renderer_package[
             "renderer"
@@ -1211,18 +1244,9 @@ def get_typeset_handler(api, browser, template):
         )
         return formatted if formatted is not None else "Failed to calculate"
 
-    async def handle_markdown_render(
-        x: dict, _FUNCTION_HANDLERS=None, markdown=False, **kwargs
-    ) -> str:
+    async def handle_markdown_render(x: dict) -> str:
         try:
             markdown_str = x["content"]
-            markdown_str = await template.process_chatbot_typeset(
-                markdown_str,
-                FUNCTION_HANDLERS=_FUNCTION_HANDLERS,
-                markdown=True,
-                _FUNCTION_HANDLERS=_FUNCTION_HANDLERS,
-                **kwargs,
-            )
             result = await document_renderer_package["renderer"].MarkdownRenderer(
                 browser
             )(markdown_str)
@@ -1235,7 +1259,7 @@ def get_typeset_handler(api, browser, template):
             log_func("ERROR", entity_name, f"Failed to render markdown: {e}")
             return markdown_str
 
-    async def handle_graphic_art(x: dict, **kwargs) -> str:
+    async def handle_graphic_art(x: dict) -> str:
         is_vertical = x.get("vertical", False)
         style = x.get("style", "anime")
         prompt = x["prompt"]
@@ -1346,7 +1370,7 @@ async def handle_agent_output(
     soup = BeautifulSoup(html_output, "lxml")
 
     # Get the legacy handler functions, which we will reuse
-    legacy_handlers = get_typeset_handler(api, browser, template)
+    legacy_handlers = get_typeset_handler(api, browser)
 
     # Process each custom tag type
 
@@ -1391,8 +1415,6 @@ async def handle_agent_output(
         # The content should be plain markdown.
         result_cq = await legacy_handlers["DocumentRender"](
             {"content": tag.get_text()},  # Don't strip, preserve whitespace
-            _FUNCTION_HANDLERS=legacy_handlers,
-            markdown=False,
         )
         tag.replace_with(result_cq)
 
@@ -1460,7 +1482,7 @@ Commands:
 AI Chat Plugin
 ================
 This plugin is used to chat with AI.
-Powered by ✨Gemini-Flash-2.0 via AutoGemini Agent
+Powered by ✨Gemini-Flash-2.5 via AutoGemini Agent
 """.strip()
 
     @staticmethod
@@ -1510,7 +1532,7 @@ Powered by ✨Gemini-Flash-2.0 via AutoGemini Agent
         sender = message["sender"]
         command = await message_codec_package[
             "codec"
-        ].encode_message_to_CQ_without_At_self_and_Image_tag(
+        ].encode_message_to_CQ_without_At_self_and_Image(
             message["message"], message["self_id"]
         )
 
@@ -1567,7 +1589,7 @@ Powered by ✨Gemini-Flash-2.0 via AutoGemini Agent
     async def process_context_command(message, message_sender_func, context):
         command = await message_codec_package[
             "codec"
-        ].encode_message_to_CQ_without_At_self_and_Image_tag(
+        ].encode_message_to_CQ_without_At_self_and_Image(
             message["message"], message["self_id"]
         )
 
@@ -1659,21 +1681,37 @@ Powered by ✨Gemini-Flash-2.0 via AutoGemini Agent
                 # --- AGENT INTEGRATION BLOCK ---
 
                 # 调试：检查原始消息内容
-                log_func("DEBUG", entity_name, f"Original message data: {message['message']}")
+                log_func(
+                    "DEBUG", entity_name, f"Original message data: {message['message']}"
+                )
 
                 # 0. 提取当前消息中的媒体文件（包含文本和图片）
                 current_message_text, current_media_files = (
                     await extract_media_from_message(message["message"])
                 )
-                
+
                 # 调试：检查提取的媒体文件
-                log_func("DEBUG", entity_name, f"Extracted message text: {current_message_text}")
-                log_func("DEBUG", entity_name, f"Extracted media files count: {len(current_media_files) if current_media_files else 0}")
+                log_func(
+                    "DEBUG",
+                    entity_name,
+                    f"Extracted message text: {current_message_text}",
+                )
+                log_func(
+                    "DEBUG",
+                    entity_name,
+                    f"Extracted media files count: {len(current_media_files) if current_media_files else 0}",
+                )
                 if current_media_files:
                     for i, media_info in enumerate(current_media_files):
-                        log_func("DEBUG", entity_name, f"Media file {i}: type={media_info.get('mime_type', 'unknown')}, data_length={len(media_info.get('data', ''))}")
+                        log_func(
+                            "DEBUG",
+                            entity_name,
+                            f"Media file {i}: type={media_info.get('mime_type', 'unknown')}, data_length={len(media_info.get('data', ''))}",
+                        )
                 else:
-                    log_func("WARN", entity_name, "No media files extracted from message")
+                    log_func(
+                        "WARN", entity_name, "No media files extracted from message"
+                    )
 
                 # 1. Build the full context using the NEW, powerful build_context method.
                 full_context_list, real_request_for_history = (
@@ -1693,22 +1731,40 @@ Powered by ✨Gemini-Flash-2.0 via AutoGemini Agent
                 current_user_prompt = current_user_message_dict.get("content", "")
 
                 # 3. Convert the rest of the list into the agent's history format.
-                log_func("DEBUG", entity_name, f"Converting {len(full_context_list)} history items to ChatMessages")
+                log_func(
+                    "DEBUG",
+                    entity_name,
+                    f"Converting {len(full_context_list)} history items to ChatMessages",
+                )
                 for i, item in enumerate(full_context_list):
                     if "media_files" in item:
-                        log_func("DEBUG", entity_name, f"History item {i} has media_files: {len(item['media_files'])}")
+                        log_func(
+                            "DEBUG",
+                            entity_name,
+                            f"History item {i} has media_files: {len(item['media_files'])}",
+                        )
                     else:
-                        log_func("DEBUG", entity_name, f"History item {i} has no media_files")
-                
+                        log_func(
+                            "DEBUG", entity_name, f"History item {i} has no media_files"
+                        )
+
                 agent_history = convert_history_to_chat_messages(full_context_list)
-                
+
                 # 调试：检查历史记录中的媒体文件
                 media_count_in_history = 0
                 for i, chat_msg in enumerate(agent_history):
                     if chat_msg.media_files:
                         media_count_in_history += len(chat_msg.media_files)
-                        log_func("DEBUG", entity_name, f"History message {i}: {len(chat_msg.media_files)} media files")
-                log_func("DEBUG", entity_name, f"Total media files in history: {media_count_in_history}")
+                        log_func(
+                            "DEBUG",
+                            entity_name,
+                            f"History message {i}: {len(chat_msg.media_files)} media files",
+                        )
+                log_func(
+                    "DEBUG",
+                    entity_name,
+                    f"Total media files in history: {media_count_in_history}",
+                )
 
                 # 4. Prepare the agent by creating its tools and API handler.
                 agent_api_handler = await create_agent_api_handler()
@@ -1742,7 +1798,7 @@ This context is crucial for understanding the conversation and providing relevan
                     model="gemini-2.5-flash",
                     temperature=1.0,
                     max_tokens=16384,
-                    api_delay=5.0
+                    api_delay=5.0,
                 )
 
                 # 6. Load the conversation history into the agent.
@@ -1758,22 +1814,36 @@ This context is crucial for understanding the conversation and providing relevan
                 )
 
                 # 添加媒体文件到当前消息
+                SUPPORTED_MEDIA_TYPES = {
+                    "image/jpeg",
+                    "image/jpg",
+                    "image/png",
+                    "image/webp",
+                }
+
                 for media_info in current_media_files:
                     try:
+                        mime_type = media_info["mime_type"]
+
+                        # 检查媒体类型是否被支持
+                        if mime_type not in SUPPORTED_MEDIA_TYPES:
+                            log_func(
+                                "WARN",
+                                entity_name,
+                                f"Skipping unsupported media type in current message: {mime_type}",
+                            )
+                            continue
+
                         media_data = base64.b64decode(media_info["data"])
-                        media_file = MediaFile(
-                            data=media_data, mime_type=media_info["mime_type"]
-                        )
+                        media_file = MediaFile(data=media_data, mime_type=mime_type)
                         current_user_chat_message.media_files.append(media_file)
                         log_func(
                             "INFO",
                             entity_name,
-                            f"Added media file to message: {media_info['mime_type']}, size: {len(media_data)} bytes",
+                            f"Added media file to message: {mime_type}, size: {len(media_data)} bytes",
                         )
                     except Exception as e:
                         log_func("WARN", entity_name, f"Failed to add media file: {e}")
-                        import traceback
-
                         log_func(
                             "DEBUG",
                             entity_name,
@@ -1814,7 +1884,6 @@ This context is crucial for understanding the conversation and providing relevan
                     # 重置处理状态
                     processor.current_response = ""
                     processor.processing_complete = False
-                    
 
                     # 直接调用_process_with_toolcode_loop进行处理
                     final_response = await processor._process_with_toolcode_loop(

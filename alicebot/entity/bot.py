@@ -263,7 +263,7 @@ class Bot:
 
         message_str = await message_codec_package[
             "codec"
-        ].encode_message_to_CQ_without_At_self_and_Image_tag(
+        ].encode_message_to_CQ_without_At_self_and_Image(
             message["message"], self.bot_qq
         )
         await self.sudo_command(
