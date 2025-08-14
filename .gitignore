@@ -13,3 +13,4 @@ python_env
 **/anti_withdraw_data
 **/logs
 alicebot/config/protocol.json
+alicebot/aibackend/config/swarmui.json

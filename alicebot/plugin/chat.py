@@ -367,11 +367,11 @@ class ContextManager:
             return result
 
         autosaves = await get_autosaves_file_informations()
-        autosave_str = "<|start_header|>think_before_new_iteration<|end_header|>\n# here are my files saved in the past, I will use them as datebase to answer questions:\n"
+        autosave_str = "<|start_header|>think_before_new_cycle<|end_header|>\n# here are my files saved in the past, I will use them as datebase to answer questions:\n"
         autosave_str += "filename | modify time\n --- | --- \n"
         for autosave in autosaves:
             autosave_str += f"{autosave['filename']} | {autosave['modify_time']}\n"
-        autosave_str += "\n\n# Moreover, I should use `write_to_file` tool to make my database fresh"
+        autosave_str += "\n\n# Moreover, I should use `write_to_file` tool to make my database fresh\n<|start_header|>think_before_response<|end_header|>\nI will improve my responses using these files.\n<|start_header|>response<|end_header|>\nReady"
 
         final_context_for_ai.insert(
             0,
@@ -475,16 +475,17 @@ class ContextManager:
         user_name = user_info.get("nickname", "unknown")
 
         # 用于存储到历史记录的完整请求头（保留了所有细节）
-        header_for_request = f'# User:`[CQ:at,qq={user_id}]`\n## msgid:`[CQ:reply,id={user_message_id}]`\n## Time:{time.asctime()}\n## User Sex:{user_sex}\n## User Name:"{user_name}"\n## User Request:\n'
+        header_for_request = f'# User:`[CQ:at,qq={user_id}]`\n## msgid:`[CQ:reply,id={user_message_id}]`\n## Time:{time.asctime()}\n## User Sex:{user_sex}\n## User Name:"{user_name}"\n## User Message:\n'
         real_request_for_history = header_for_request + user_request
 
         # 传递给模型的当前用户提示（更简洁，突出重点）
         current_user_profile = await self.get_profile(user_id)
         current_user_message_content = (
             f"# Current User (Talking to A.I.(you) now):\n"
-            f"## Name: {user_name} (ID: {user_id})\n"
-            f"## Their Request:\n{user_request}\n"
-            f"---(user profile)---\n{current_user_profile}"
+            f"## Name: {user_name} (ID: [CQ:at,qq={user_id}])\n"
+            f"---(User Profile Start)---\n{current_user_profile}"
+            f"---(User Profile End)---\n"
+            f"## User Message:\n{user_request}\n"
         )
 
         final_context_for_ai.append(
@@ -764,10 +765,20 @@ def get_agent_tool_codes() -> List[ToolCodeInfo]:
                 "tags": "A string containing one or two tags, separated by a space. Example: '1girl blue_hair'. Leave empty for a completely random image. ONLY supports **ENGLISH** tags.",
             },
         ),
+        ToolCodeInfo(
+            name="ban_user",
+            description="Bans a user from the current group for a specified duration (Group Admin Only).",
+            detail="This tool allows you to temporarily ban a user from the group. The ban duration is limited to 1-10 minutes. Use this when a user violates group rules or behaves inappropriately.",
+            args={
+                "user_id": "The QQ number of the user to ban (string or integer).",
+                "minutes": "The duration of the ban in minutes (1-10 minutes, integer).",
+                "reason": "The reason for the ban (optional, for logging purposes).",
+            },
+        ),
     ]
 
 
-async def create_agent_api_handler() -> DefaultApi:
+async def create_agent_api_handler(group_id: int = None, api = None) -> DefaultApi:
     """Creates the API handler that maps tool names to their actual implementation."""
 
     async def api_handler(method_name: str, *args, **kwargs) -> Any:
@@ -883,6 +894,49 @@ async def create_agent_api_handler() -> DefaultApi:
                     return f"[HTTP Request Error] A client-side error occurred: {e}. URL: {url}"
                 except Exception as e:
                     return f"[HTTP Request Error] An unexpected error occurred: {e}. URL: {url}"
+            elif method_name == "ban_user":
+                # 获取参数
+                user_id = kwargs.get("user_id")
+                minutes = kwargs.get("minutes", 1)
+                reason = kwargs.get("reason", "Violation of group rules")
+                
+                # 参数验证
+                if not user_id:
+                    return "[Ban User Error] 'user_id' is a required argument."
+                
+                if not group_id:
+                    return "[Ban User Error] This tool can only be used in group chats."
+                    
+                if not api:
+                    return "[Ban User Error] API instance not available."
+                
+                try:
+                    # 确保user_id是字符串或整数
+                    user_id = str(user_id)
+                    # 确保minutes是整数且在合理范围内
+                    minutes = int(minutes)
+                    minutes = max(1, min(10, minutes))  # 限制在1-10分钟之间
+                    
+                    # 执行ban操作
+                    await api.set_group_ban(group_id, user_id, minutes * 60)
+                    
+                    log_func(
+                        "INFO",
+                        entity_name,
+                        f"User {user_id} banned for {minutes} minutes in group {group_id}. Reason: {reason}",
+                    )
+                    
+                    return f"User {user_id} has been banned for {minutes} minutes. Reason: {reason}"
+                    
+                except ValueError:
+                    return "[Ban User Error] 'minutes' must be a valid integer between 1 and 10."
+                except Exception as e:
+                    log_func(
+                        "ERROR",
+                        entity_name,
+                        f"Error banning user {user_id}: {e}",
+                    )
+                    return f"[Ban User Error] Failed to ban user: {e}"
             else:
                 return f"[Error] Unknown tool called: {method_name}"
         except Exception as e:
@@ -1146,7 +1200,7 @@ Use these for structuring your text response.
 
 ---
 ### **Part 2: Special Action Tags**
-Use these tags to perform specific actions. Do NOT use them for simple text formatting.
+Sometimes you may display rich media content using these tags to perform specific actions. Do NOT use them for simple text formatting.
 
 **1. Text-to-Speech:**
    - **Tag:** `<tts emotion="...">...</tts>`
@@ -1155,33 +1209,26 @@ Use these tags to perform specific actions. Do NOT use them for simple text form
    - **Example:** `<tts emotion="excited">主人，我算出来啦！</tts>`
    - **Note:** Since the TTS costs money, use it only when necessary.
 
-**2. AI Painting:**
-   - **Tag:** `<paint style="..." orientation="...">...</paint>`
+**2. Text-to-Image:**
+   - **Tag:** `<tti style="..." orientation="...">...</tti>`
    - **Purpose:** Generates an image based on the enclosed English prompt.
    - **Attributes:**
      - `style`: "anime" (default) or "photo".
      - `orientation`: "wide" (default) or "tall".
-   - **Example:** `<paint style="anime" orientation="tall">1girl, white hair, cat ears, looking at viewer</paint>`
+   - **Example:** `<tti style="anime" orientation="tall">1girl, white hair, cat ears, looking at viewer</tti>`
+   - **Note:** Text-to-Image is not `tool_code`, you should only use it in `response` block.
 
-**3. Ban a User (Group Admin Only):**
-   - **Tag:** `<ban user_id="..." minutes="...">...</ban>`
-   - **Purpose:** Bans a user from the group for a specified duration.
-   - **Attributes:**
-     - `user_id`: The QQ number of the user to ban.
-     - `minutes`: The duration of the ban (1-10 minutes).
-   - **Example:** `<ban user_id="12345678" minutes="5">This user was spamming.</ban>`
-
-**4. Wolfram|Alpha Calculation Display:**
+**3. Wolfram|Alpha Calculation Display:**
    - **Tag:** `<wolfram>...</wolfram>`
    - **Purpose:** Computes the enclosed query using Wolfram|Alpha and displays the result as an image.
    - **Example:** `<wolfram>integrate x^2 dx from 0 to 1</wolfram>`
 
-**5. Markdown to Image Rendering:**
+**4. Markdown to Image Rendering:**
    - **Tag:** `<markdown-render>...</markdown-render>`
    - **Purpose:** Renders the enclosed Markdown content as an image. Use this for complex tables, formulas, or layouts that standard HTML can't handle.
    - **Example:** `<markdown-render>| Header 1 | Header 2 |\n|---|---|\n| Cell 1 | Cell 2 |</markdown-render>`
 
-**6. Display Image from URL:**
+**5. Display Image from URL:**
    - **Tag:** `<image src="..." />`
    - **Purpose:** Downloads an image from a public URL and displays it directly in the chat.
    - **Attributes:** `src` - The full, direct URL to the image file (e.g., .png, .jpg, .gif).
@@ -1381,8 +1428,8 @@ async def handle_agent_output(
         )
         tag.replace_with(result_cq)  # Replace the tag with the [CQ:record] code
 
-    # <paint>
-    for tag in soup.find_all("paint"):
+    # <tti>
+    for tag in soup.find_all("tti"):
         result_cq = await legacy_handlers["graphic_art_in_English"](
             {
                 "prompt": tag.get_text(strip=True),
@@ -1391,16 +1438,6 @@ async def handle_agent_output(
             }
         )
         tag.replace_with(result_cq)  # Replace with [CQ:image]
-
-    # <ban>
-    for tag in soup.find_all("ban"):
-        # The text inside the tag is the ban reason, which can be part of the confirmation message
-        reason = tag.get_text(strip=True)
-        confirmation_text, _ = await legacy_handlers["shut_up"](
-            {"user_id": tag.get("user_id"), "minutes": int(tag.get("minutes", 1))},
-            group_id=group_id,
-        )
-        tag.replace_with(f"{confirmation_text} (Reason: {reason})")
 
     # <wolfram>
     for tag in soup.find_all("wolfram"):
@@ -1412,9 +1449,10 @@ async def handle_agent_output(
     # <markdown-render>
     for tag in soup.find_all("markdown-render"):
         # We need to be careful here to avoid infinite recursion if markdown-render itself contains action tags
-        # The content should be plain markdown.
+        # The content should be plain markdown, but we preserve the raw HTML structure inside the tag
+        raw_content = tag.decode_contents()  # 使用decode_contents()获取原始HTML内容
         result_cq = await legacy_handlers["DocumentRender"](
-            {"content": tag.get_text()},  # Don't strip, preserve whitespace
+            {"content": raw_content},  # 传递原始HTML内容
         )
         tag.replace_with(result_cq)
 
@@ -1767,7 +1805,7 @@ Powered by ✨Gemini-Flash-2.5 via AutoGemini Agent
                 )
 
                 # 4. Prepare the agent by creating its tools and API handler.
-                agent_api_handler = await create_agent_api_handler()
+                agent_api_handler = await create_agent_api_handler(group_id, api)
                 agent_tool_codes = get_agent_tool_codes()
 
                 gemini_api_key = get_gemini_key()
@@ -1889,6 +1927,7 @@ This context is crucial for understanding the conversation and providing relevan
                     final_response = await processor._process_with_toolcode_loop(
                         callback=stream_callback,
                         tool_code_timeout=90.0,
+                        max_cycle_cost=5
                     )
 
                     # 9. Process and send the final response.
