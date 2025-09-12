@@ -367,11 +367,11 @@ class ContextManager:
             return result
 
         autosaves = await get_autosaves_file_informations()
-        autosave_str = "<|start_header|>think_before_new_cycle<|end_header|>\n# here are my files saved in the past, I will use them as datebase to answer questions:\n"
+        autosave_str = "<|start_header|>subjective_thinking<|end_header|>\n# here are my files saved in the past, I will use them as datebase to answer questions:\n"
         autosave_str += "filename | modify time\n --- | --- \n"
         for autosave in autosaves:
             autosave_str += f"{autosave['filename']} | {autosave['modify_time']}\n"
-        autosave_str += "\n\n# Moreover, I should use `write_to_file` tool to make my database fresh\n<|start_header|>think_before_response<|end_header|>\nI will improve my responses using these files.\n<|start_header|>response<|end_header|>\nReady"
+        autosave_str += "\n\n# Moreover, I should use `write_to_file` tool to make my database fresh\n\nI will improve my responses using these files.\n<|start_header|>response<|end_header|>\nReady"
 
         final_context_for_ai.insert(
             0,
@@ -410,7 +410,7 @@ class ContextManager:
                 0,
                 {
                     "role": "assistant",
-                    "content": f"<|start_header|>tool_code_result_from_system<|end_header|># Group Member List:\n{formatted_member_list}",
+                    "content": f"<|start_header|>system_feedback<|end_header|># Group Member List:\n{formatted_member_list}",
                 },
             )
 
