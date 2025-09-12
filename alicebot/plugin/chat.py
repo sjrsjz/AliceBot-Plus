@@ -367,11 +367,11 @@ class ContextManager:
             return result
 
         autosaves = await get_autosaves_file_informations()
-        autosave_str = "<|start_header|>subjective_thinking<|end_header|>\n# here are my files saved in the past, I will use them as datebase to answer questions:\n"
+        autosave_str = "<agent_block_header>think</agent_block_header>\n# here are my files saved in the past, I will use them as datebase to answer questions:\n"
         autosave_str += "filename | modify time\n --- | --- \n"
         for autosave in autosaves:
             autosave_str += f"{autosave['filename']} | {autosave['modify_time']}\n"
-        autosave_str += "\n\n# Moreover, I should use `write_to_file` tool to make my database fresh\n\nI will improve my responses using these files.\n<|start_header|>response<|end_header|>\nReady"
+        autosave_str += "\n\n# Moreover, I should use `write_to_file` tool to make my database fresh\n\nI will improve my responses using these files.\n<agent_block_header>response</agent_block_header>\nReady"
 
         final_context_for_ai.insert(
             0,
@@ -410,7 +410,7 @@ class ContextManager:
                 0,
                 {
                     "role": "assistant",
-                    "content": f"<|start_header|>system_feedback<|end_header|># Group Member List:\n{formatted_member_list}",
+                    "content": f"<agent_block_header>system_feedback</agent_block_header># Group Member List:\n{formatted_member_list}",
                 },
             )
 
@@ -1224,9 +1224,9 @@ Sometimes you may display rich media content using these tags to perform specifi
    - **Example:** `<wolfram>integrate x^2 dx from 0 to 1</wolfram>`
 
 **4. Markdown to Image Rendering:**
-   - **Tag:** `<markdown-render>...</markdown-render>`
-   - **Purpose:** Renders the enclosed Markdown content as an image. Use this for complex tables, formulas, or layouts that standard HTML can't handle.
-   - **Example:** `<markdown-render>| Header 1 | Header 2 |\n|---|---|\n| Cell 1 | Cell 2 |</markdown-render>`
+   - **Tag:** `<document-render>...</document-render>`
+   - **Purpose:** Renders the enclosed Markdown content or HTML content as an image. Use this for complex tables, formulas, or layouts that standard HTML can't handle.
+   - **Example:** `<document-render>| Header 1 | Header 2 |\n|---|---|\n| Cell 1 | Cell 2 |</document-render>`
 
 **5. Display Image from URL:**
    - **Tag:** `<image src="..." />`
@@ -1238,7 +1238,7 @@ Sometimes you may display rich media content using these tags to perform specifi
 ### **Final Instruction**
 Your entire final response must be composed using a sequence of the tags described above.
 
-# Remember: ALL your responses must be output after `<|start_header|>response<|end_header|>` BLOCK
+# Remember: ALL your responses must be output after `<agent_block_header>response</agent_block_header>` BLOCK
 """
 
 
@@ -1320,10 +1320,14 @@ def get_typeset_handler(api, browser):
             if style == "anime"
             else aibackend_package["aipaint"].ImageStyle.PHOTO
         )
-        result = await aibackend_package["aipaint"].generate_image(
-            prompt, size, style, aibackend_package["aipaint"].APILevel.PRO
-        )
-        return f"[CQ:image,file=base64://{base64.b64encode(result).decode()}]"
+        try:
+            result = await aibackend_package["aipaint"].generate_image(
+                prompt, size, style, aibackend_package["aipaint"].APILevel.PRO
+            )
+            return f"[CQ:image,file=base64://{base64.b64encode(result).decode()}]"
+        except Exception as e:
+            log_func("ERROR", entity_name, f"Failed to generate image: {e}")
+            return f"Failed to generate image: {e}"
 
     async def handle_image_from_url(tag: BeautifulSoup) -> str:
         url = tag.get("src")
@@ -1446,9 +1450,9 @@ async def handle_agent_output(
         )  # Get CQ code, not HTML
         tag.replace_with(result_cq)
 
-    # <markdown-render>
-    for tag in soup.find_all("markdown-render"):
-        # We need to be careful here to avoid infinite recursion if markdown-render itself contains action tags
+    # <document-render>
+    for tag in soup.find_all("document-render"):
+        # We need to be careful here to avoid infinite recursion if document-render itself contains action tags
         # The content should be plain markdown, but we preserve the raw HTML structure inside the tag
         raw_content = tag.decode_contents()  # 使用decode_contents()获取原始HTML内容
         result_cq = await legacy_handlers["DocumentRender"](
