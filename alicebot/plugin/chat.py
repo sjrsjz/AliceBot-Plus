@@ -475,16 +475,24 @@ class ContextManager:
         user_name = user_info.get("nickname", "unknown")
 
         # 用于存储到历史记录的完整请求头（保留了所有细节）
-        header_for_request = f'# User:`[CQ:at,qq={user_id}]`\n## msgid:`[CQ:reply,id={user_message_id}]`\n## Time:{time.asctime()}\n## User Sex:{user_sex}\n## User Name:"{user_name}"\n## User Message:\n'
-        real_request_for_history = header_for_request + user_request
+        real_request_for_history = (
+            f"## Name: {user_name} (use `[CQ:at,qq={user_id}]` to mention)\n"
+            f"## Time: {time.asctime()}\n"
+            f"## User Sex: {user_sex}\n"
+            f"## User Message ID: `[CQ:reply,id={user_message_id}]`\n"
+            f"## User Message:\n{user_request}\n"
+        )
 
         # 传递给模型的当前用户提示（更简洁，突出重点）
         current_user_profile = await self.get_profile(user_id)
         current_user_message_content = (
             f"# Current User (Talking to A.I.(you) now):\n"
-            f"## Name: {user_name} (ID: [CQ:at,qq={user_id}])\n"
+            f"## Name: {user_name} (use `[CQ:at,qq={user_id}]` to mention)\n"
             f"---(User Profile Start)---\n{current_user_profile}"
             f"---(User Profile End)---\n"
+            f"## Time: {time.asctime()}\n"
+            f"## User Sex: {user_sex}\n"
+            f"## User Message ID: `[CQ:reply,id={user_message_id}]`\n"
             f"## User Message:\n{user_request}\n"
         )
 
@@ -1825,8 +1833,11 @@ Powered by ✨Gemini-Flash-2.5 via AutoGemini Agent
                     )
                     return
 
-                addtitional_prompt = """# Since you are an AI agent in a group chat, you must carefully consider the `# Group Message History Context` before responding.
-This context is crucial for understanding the conversation and providing relevant responses."""
+                addtitional_prompt = f"""# Since you are an AI agent in a group chat, you must carefully consider the `# Group Message History Context` before responding.
+This context is crucial for understanding the conversation and providing relevant responses.
+
+Your own QQ number is [CQ:at,qq={message['self_id']}]
+"""
 
                 # 5. Create a new agent processor for this specific request.
                 processor = create_cot_processor(
