@@ -367,11 +367,10 @@ class ContextManager:
             return result
 
         autosaves = await get_autosaves_file_informations()
-        autosave_str = "<agent_block_header>think</agent_block_header>\n# here are my files saved in the past, I will use them as datebase to answer questions:\n"
-        autosave_str += "filename | modify time\n --- | --- \n"
+        autosave_str = "<reactAgentSegmentHeader>think</reactAgentSegmentHeader>\n# here are my files saved in the past, I will use them as datebase to answer questions:\n"
+        autosave_str += "filename\n --- \n"
         for autosave in autosaves:
-            autosave_str += f"{autosave['filename']} | {autosave['modify_time']}\n"
-        autosave_str += "\n\n# Moreover, I should use `write_to_file` tool to make my database fresh\n\nI will improve my responses using these files.\n<agent_block_header>response</agent_block_header>\nReady"
+            autosave_str += f"{autosave['filename']}\n"
 
         final_context_for_ai.insert(
             0,
@@ -387,14 +386,14 @@ class ContextManager:
             except:
                 group_member_list = []
             if len(group_member_list) <= 200:
-                formatted_member_list = "```group member list\ncard | nickname | gender | qq\n --- | --- | --- | ---\n"
+                formatted_member_list = (
+                    "```users\ncard | nickname | gender | qq\n --- | --- | --- | ---\n"
+                )
                 for member in group_member_list:
                     formatted_member_list += f"{member['card']} | {member['nickname']} | {member['sex']} | {member['user_id']}\n"
                 formatted_member_list += "```"
             elif len(group_member_list) <= 500:
-                formatted_member_list = (
-                    "```group member list\nnickname | qq\n --- | ---\n"
-                )
+                formatted_member_list = "```users\nnickname | qq\n --- | ---\n"
                 for member in group_member_list:
                     nickname = (
                         member["card"] if member["card"] != None else member["nickname"]
@@ -402,15 +401,13 @@ class ContextManager:
                     formatted_member_list += f"{nickname} | {member['user_id']}\n"
                 formatted_member_list += "```"
             else:
-                formatted_member_list = (
-                    "```group member list\nmember count exceeds 500\n```"
-                )
+                formatted_member_list = "```users\nmember count exceeds 500\n```"
 
             final_context_for_ai.insert(
                 0,
                 {
-                    "role": "assistant",
-                    "content": f"<agent_block_header>system_feedback</agent_block_header># Group Member List:\n{formatted_member_list}",
+                    "role": "user",
+                    "content": f"<reactAgentSegmentHeader>user_list</reactAgentSegmentHeader>{formatted_member_list}",
                 },
             )
 
@@ -786,7 +783,7 @@ def get_agent_tool_codes() -> List[ToolCodeInfo]:
     ]
 
 
-async def create_agent_api_handler(group_id: int = None, api = None) -> DefaultApi:
+async def create_agent_api_handler(group_id: int = None, api=None) -> DefaultApi:
     """Creates the API handler that maps tool names to their actual implementation."""
 
     async def api_handler(method_name: str, *args, **kwargs) -> Any:
@@ -907,35 +904,35 @@ async def create_agent_api_handler(group_id: int = None, api = None) -> DefaultA
                 user_id = kwargs.get("user_id")
                 minutes = kwargs.get("minutes", 1)
                 reason = kwargs.get("reason", "Violation of group rules")
-                
+
                 # 参数验证
                 if not user_id:
                     return "[Ban User Error] 'user_id' is a required argument."
-                
+
                 if not group_id:
                     return "[Ban User Error] This tool can only be used in group chats."
-                    
+
                 if not api:
                     return "[Ban User Error] API instance not available."
-                
+
                 try:
                     # 确保user_id是字符串或整数
                     user_id = str(user_id)
                     # 确保minutes是整数且在合理范围内
                     minutes = int(minutes)
                     minutes = max(1, min(10, minutes))  # 限制在1-10分钟之间
-                    
+
                     # 执行ban操作
                     await api.set_group_ban(group_id, user_id, minutes * 60)
-                    
+
                     log_func(
                         "INFO",
                         entity_name,
                         f"User {user_id} banned for {minutes} minutes in group {group_id}. Reason: {reason}",
                     )
-                    
+
                     return f"User {user_id} has been banned for {minutes} minutes. Reason: {reason}"
-                    
+
                 except ValueError:
                     return "[Ban User Error] 'minutes' must be a valid integer between 1 and 10."
                 except Exception as e:
@@ -1214,7 +1211,7 @@ Sometimes you may display rich media content using these tags to perform specifi
    - **Tag:** `<tts emotion="...">...</tts>`
    - **Purpose:** Converts the enclosed text into a voice message.
    - **Attributes:** `emotion` (optional) - can be "happy", "sad", "excited", etc., to influence the voice tone.
-   - **Example:** `<tts emotion="excited">主人，我算出来啦！</tts>`
+   - **Example:** `<tts emotion="excited">你好！</tts>`
    - **Note:** Since the TTS costs money, use it only when necessary.
 
 **2. Text-to-Image:**
@@ -1246,7 +1243,7 @@ Sometimes you may display rich media content using these tags to perform specifi
 ### **Final Instruction**
 Your entire final response must be composed using a sequence of the tags described above.
 
-# Remember: ALL your responses must be output after `<agent_block_header>response</agent_block_header>` BLOCK
+# Remember: ALL your responses must be output after `<reactAgentSegmentHeader>send_response_to_user</reactAgentSegmentHeader>` BLOCK
 """
 
 
@@ -1849,8 +1846,8 @@ Your own QQ number is [CQ:at,qq={message['self_id']}]
                     + group_context["ai_params"]["system_instruction"],
                     respond_tags_description=CUSTOM_TAGS_PROMPT,
                     model="gemini-2.5-flash",
-                    temperature=1.0,
-                    max_tokens=16384,
+                    temperature=0.7,
+                    max_tokens=65536,
                     api_delay=5.0,
                 )
 
@@ -1942,7 +1939,7 @@ Your own QQ number is [CQ:at,qq={message['self_id']}]
                     final_response = await processor._process_with_toolcode_loop(
                         callback=stream_callback,
                         tool_code_timeout=90.0,
-                        max_cycle_cost=5
+                        max_cycle_cost=5,
                     )
 
                     # 9. Process and send the final response.
@@ -1951,7 +1948,7 @@ Your own QQ number is [CQ:at,qq={message['self_id']}]
                     agent_output = parse_agent_output(final_response)
                     ai_output = "No response"
                     for item in agent_output:
-                        if item.type == "response":
+                        if item.type == "send_response_to_user":
                             ai_output = item.content
 
                     parsed_output = await handle_agent_output(
