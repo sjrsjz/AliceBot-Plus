@@ -1202,6 +1202,7 @@ Use these for structuring your text response.
 - `<ul>, <ol>, <li>`: For lists.
 - `<code>, <pre>`: For code blocks.
 - `<a href="...">...</a>`: For hyperlinks.
+- `<hr>`: For separate multiple sections and send them one by one. For example, "this is the first message.<hr>this is the second message." then the two parts will be sent as two separate messages.
 
 ---
 ### **Part 2: Special Action Tags**
@@ -1414,10 +1415,11 @@ async def handle_agent_output(
     api: Any,  # Pass the onebot api instance
     browser: Any,  # Pass the browser instance
     group_id: int,  # Pass the group_id for context
-) -> str:
+) -> List[str]:
     """
     Parses the agent's HTML output, executes special action tags,
-    and returns a string ready to be sent to the message API.
+    and returns a list of strings ready to be sent to the message API.
+    If there are top-level <hr> tags, the content will be split into multiple messages.
     """
     if not BeautifulSoup:
         log_func("ERROR", "Chat", "BeautifulSoup is not installed, returning raw HTML.")
@@ -1471,9 +1473,55 @@ async def handle_agent_output(
         tag.replace_with(result_cq)
 
     remaining_html = str(soup)
-    final_text = convert_html_to_readable_text(remaining_html)
 
-    return final_text
+    # 检查是否有顶层hr标签需要分割消息
+    soup_for_split = BeautifulSoup(remaining_html, "lxml")
+
+    # 查找所有顶层的hr标签（直接在body下的，不嵌套在其他标签内）
+    top_level_hrs = []
+    body = soup_for_split.find("body")
+    if body:
+        for child in body.children:
+            if hasattr(child, "name") and child.name == "hr":
+                top_level_hrs.append(child)
+
+    # 如果没有顶层hr标签，返回单个消息的列表（向后兼容）
+    if not top_level_hrs:
+        final_text = convert_html_to_readable_text(remaining_html)
+        return [final_text]
+
+    # 如果有顶层hr标签，按这些标签分割内容
+    message_parts = []
+    current_content = []
+
+    if body:
+        for child in body.children:
+            if hasattr(child, "name") and child.name == "hr":
+                # 遇到hr标签，处理当前积累的内容
+                if current_content:
+                    # 直接拼接HTML字符串
+                    part_html = "".join(str(item) for item in current_content)
+                    part_text = convert_html_to_readable_text(part_html)
+                    if part_text.strip():  # 只添加非空内容
+                        message_parts.append(part_text)
+                    current_content = []
+            else:
+                # 不是hr标签，添加到当前内容
+                current_content.append(child)
+
+        # 处理最后一部分内容
+        if current_content:
+            part_html = "".join(str(item) for item in current_content)
+            part_text = convert_html_to_readable_text(part_html)
+            if part_text.strip():
+                message_parts.append(part_text)
+
+    # 如果分割后没有有效内容，返回原始内容
+    if not message_parts:
+        final_text = convert_html_to_readable_text(remaining_html)
+        return [final_text]
+
+    return message_parts
 
 
 class Plugin:
@@ -1846,7 +1894,7 @@ Your own QQ number is [CQ:at,qq={message['self_id']}]
                     + group_context["ai_params"]["system_instruction"],
                     respond_tags_description=CUSTOM_TAGS_PROMPT,
                     model="gemini-2.5-flash",
-                    temperature=0.7,
+                    temperature=1.0,
                     max_tokens=65536,
                     api_delay=5.0,
                 )
@@ -1951,19 +1999,23 @@ Your own QQ number is [CQ:at,qq={message['self_id']}]
                         if item.type == "send_response_to_user":
                             ai_output = item.content
 
-                    parsed_output = await handle_agent_output(
+                    parsed_outputs = await handle_agent_output(
                         ai_output,
                         api,
                         await plugin_context.bot_entity.browser.get_browser(),
                         group_id,
                     )
 
-                    await api.send_group_message_separate_audio(
-                        group_id,
-                        await message_codec_package["codec"].decode_CQ_to_message(
-                            parsed_output.strip()
-                        ),
-                    )
+                    # 现在handle_agent_output返回消息列表，分别发送每条消息
+                    for message_part in parsed_outputs:
+                        message_part = message_part.strip()
+                        if message_part:  # 只发送非空消息
+                            await api.send_group_message_separate_audio(
+                                group_id,
+                                await message_codec_package[
+                                    "codec"
+                                ].decode_CQ_to_message(message_part),
+                            )
 
                     # 10. Save the complete interaction to context manager.
                     current_time = time.time()
