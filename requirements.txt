@@ -8,9 +8,6 @@ typst
 beautifulsoup4
 lxml
 
-numpy
-matplotlib
-
 RestrictedPython
 
 google-generativeai

@@ -1,23 +1,10 @@
-import requests
 import traceback
 import asyncio
-import re
 import sys
-import asyncio
 from bs4 import BeautifulSoup
 import tiktoken
-import markdown
-from markdown.extensions import Extension
-from markdown.inlinepatterns import SimpleTagPattern
-from markdown.blockprocessors import BlockProcessor
-from markdown.preprocessors import Preprocessor
-import base64
-import xml.etree.ElementTree as ET
-import threading
 import random
-from queue import Queue
 import pathlib
-
 from typing import Callable, Any
 
 log_func: Callable[[Any], None]
@@ -28,7 +15,6 @@ if project_root not in sys.path:
 from loader import moduleloader
 
 package = moduleloader.ModuleLoader(str(pathlib.Path(__file__).parent), log_func=log_func)
-latex = package.load_module("latex", log_func=log_func)
 wolfram_alpha = package.load_module("wolfram_alpha", log_func=log_func)
 typst_render = package.load_module("typst_render", log_func=log_func)
 safe_python_executor = package.load_module("safe_python_executor", log_func=log_func)
@@ -238,677 +224,147 @@ async def get_webpage(browser, url, only_text=False, max_token=2048):
 
 
 def MarkdownRenderer(browser):
-    html_replacements = []
-
-    class _MarkdownRenderer:
-        def __init__(self) -> None:
-            pass
-
-        class DelExtension(Extension):
-            def extendMarkdown(self, md):
-                DEL_RE = r'(?<!\\)(~~)(?![^\\]*\\)(.+?)(?<!\\)(~~)'
-                md.inlinePatterns.register(SimpleTagPattern(DEL_RE, 'del'), 'del', 170)
-
-        class InsExtension(Extension):
-            def extendMarkdown(self, md):
-                INS_RE = r'(?<!\\)(\+\+)(?![^\\]*\\)(.+?)(?<!\\)(\+\+)'
-                md.inlinePatterns.register(SimpleTagPattern(INS_RE, 'ins'), 'ins', 170)
-
-        class SubExtension(Extension):
-            def extendMarkdown(self, md):
-                SUB_RE = r'(?<!\\)(~)(?![^\\]*\\)(.+?)(?<!\\)(~)'
-                md.inlinePatterns.register(SimpleTagPattern(SUB_RE, 'sub'), 'sub', 170)
-
-        class SupExtension(Extension):
-            def extendMarkdown(self, md):
-                SUP_RE = r'(?<!\\)(\^)(?![^\\]*\\)(.+?)(?<!\\)(\^)'
-                md.inlinePatterns.register(SimpleTagPattern(SUP_RE, 'sup'), 'sup', 170)
-
-        class MarkExtension(Extension):
-            def extendMarkdown(self, md):
-                MARK_RE = r'(?<!\\)(==)(?![^\\]*\\)(.+?)(?<!\\)(==)'
-                md.inlinePatterns.register(SimpleTagPattern(MARK_RE, 'mark'), 'mark', 170)
-
-        class UnderlineExtension(Extension):
-            def extendMarkdown(self, md):
-                UNDERLINE_RE = r'(?<!\\)(__)(?![^\\]*\\)(.+?)(?<!\\)(__)'
-                md.inlinePatterns.register(SimpleTagPattern(UNDERLINE_RE, 'u'), 'u', 170)
-
-        class SmallExtension(Extension):
-            def extendMarkdown(self, md):
-                SMALL_RE = r'(?<!\\)(,,)(?![^\\]*\\)(.+?)(?<!\\)(,,)'
-                md.inlinePatterns.register(SimpleTagPattern(SMALL_RE, 'small'), 'small', 170)
-
-        class TtExtension(Extension):
-            def extendMarkdown(self, md):
-                TT_RE = r'(?<!\\)(``)(?![^\\]*\\)(.+?)(?<!\\)(``)'
-                md.inlinePatterns.register(SimpleTagPattern(TT_RE, 'tt'), 'tt', 170)
-
-        class PieChartExtension(Extension):
-            def extendMarkdown(self, md):
-                # 饼图
-                # 格式：
-                # <piechart>label1: value1, label2: value2, ...</piechart>
-                PIECHART_RE = r'<piechart>(.*?)</piechart>'
-                md.inlinePatterns.register(_MarkdownRenderer.PieChartProcessor(PIECHART_RE), 'piechart', 170)
-
-        class PieChartProcessor(SimpleTagPattern):
-            def __init__(self, pattern):
-                self.pattern = pattern
-                super().__init__(pattern, 'piechart')
-
-            def handleMatch(self, m):
-                try:
-                    log_func('INFO', 'PieChart',  m.group(2))
-                    data = m.group(2)
-                    if not data or not data.strip():
-                        return m.group(0)
-
-                    data = data.split(",")
-                    labels = []
-                    values = []
-
-                    for i in data:
-                        try:
-                            i = i.strip().split(":")
-                            if len(i) != 2:
-                                return m.group(0)
-                            value = float(i[1].strip())
-                            if value < 0:
-                                return m.group(0)
-                            labels.append(i[0])
-                            values.append(value)
-                        except:
-                            return m.group(0)
-
-                    img = latex.get_pie_chart_image_data(values, labels)
-                    if img is None:
-                        return m.group(0)
-
-                    img = base64.b64encode(img).decode()
-                    replacement = f"\x02HTML:{len(html_replacements[-1])}\x03"
-                    html_replacements[-1].append(
-                        (
-                        replacement, f'<img src="data:image/png;base64,{img}" style="display: block; margin: 0 auto;">')
-                    )
-                    return replacement
-
-                except:
-                    return m.group(0)
-
-        class ImgExtension(Extension):
-            def extendMarkdown(self, md):
-                # 图片
-                # ![alt](url) 或 ![alt](url "title") 或 ![alt](data:image/...)
-                IMG_RE = r'!\[(.*?)\]\((data:image\/.*?;base64,.*?|.*?)(?:\s+"(.*?)")?\)'  # 支持 base64 编码的图片
-                md.inlinePatterns.register(_MarkdownRenderer.GenerateImgTag(IMG_RE), 'img', 180)
-
-        class GenerateImgTag(SimpleTagPattern):
-            def __init__(self, pattern):
-                self.pattern = pattern
-                super().__init__(pattern, "img")
-
-            def handleMatch(self, m):
-                alt = m.group(2)
-                img = m.group(3)
-                # 判断是base64编码还是url，如果是url则尝试下载
-                not_middle = len(alt) > 0 and alt[0] == "@"
-                if img.startswith("data:image/"):
-                    # 居中对齐
-                    if not_middle:
-                        alt = alt[1:]
-                        # 自由图片位置（可以插入到任意位置，非居中）
-                        return ET.Element("img", alt=alt, src=img, style="vertical-align:middle;")
-                    else:
-                        return ET.Element("img", alt=alt, src=img, style="display: block; margin: 0 auto;")
-                else:
-                    try:
-                        img_format = img.split(".")[-1]
-                        img = requests.get(img).content
-
-                        img = base64.b64encode(img).decode()
-                    except:
-                        if not_middle:
-                            alt = alt[1:]
-                            # 自由图片位置（可以插入到任意位置，非居中）
-                            return ET.Element("img", alt=alt, src=img)
-                        else:
-                            return ET.Element("img", alt=alt, src=img, style="display: block; margin: 0 auto;")
-                if not_middle:
-                    alt = alt[1:]
-                    # 自由图片位置（可以插入到任意位置，非居中）
-                    return ET.Element("img", alt=alt, src=f"data:image/{img_format};base64,{img}")
-                else:
-                    return ET.Element("img", alt=alt, src=f"data:image/{img_format};base64,{img}",
-                                      style="display: block; margin: 0 auto;")
-
-        class FontExtension(Extension):
-            def extendMarkdown(self, md):
-                FONT_RE = r'(?s)<font=(.*?)>(.*?)</font>'
-                md.parser.blockprocessors.register(_MarkdownRenderer.FontPattern(md.parser, FONT_RE), 'font', 183)
-
-        class FontPattern(BlockProcessor):
-            def __init__(self, parser, pattern):
-                super().__init__(parser)
-                self.pattern = re.compile(pattern, re.DOTALL | re.MULTILINE)
-
-            def test(self, parent, block):
-                return bool(self.pattern.search(block))
-
-            def run(self, parent, blocks):
-                block = blocks.pop(0)
-                match = self.pattern.search(block)
-                if match:
-                    remaining_blocks = block[match.end():].lstrip()
-                    if remaining_blocks:
-                        blocks.insert(0, remaining_blocks)
-                    font_name = match.group(1)
-                    text = match.group(2)
-                    el = ET.SubElement(parent, 'span', attrib={'style': f'font-family: {font_name};'})
-                    el.text = text
-
-        class WolframAlphaExtension(Extension):
-            def extendMarkdown(self, md):
-                md.parser.blockprocessors.register(_MarkdownRenderer.WolframAlphaProcessor(md.parser), 'wolframalpha',
-                                                   184)
-
-        class WolframAlphaProcessor(BlockProcessor):
-            def __init__(self, parser):
-                super().__init__(parser)
-                self.WOLFRAM_RE = re.compile(r'(?s)<wolframalpha>(.*?)</wolframalpha>', re.DOTALL | re.MULTILINE)
-
-            def test(self, parent, block):
-                return bool(self.WOLFRAM_RE.search(block))
-
-            def run(self, parent, blocks):
-                block = blocks.pop(0)
-                match = self.WOLFRAM_RE.search(block)
-                if match:
-                    remaining_blocks = block[match.end():].lstrip()
-                    if remaining_blocks:
-                        blocks.insert(0, remaining_blocks)
-
-                    log_func('INFO', 'WolframAlpha', "Query:", match.groups())
-                    query = match.group(1)
-                    try:
-                        result = asyncio.run(wolfram_alpha.wolfram_alpha_compute(query))
-                        if result is None:
-                            html = """<div class="alert alert-warning" role="alert">No results</div>"""
-                        else:
-                            html = asyncio.run(wolfram_alpha.format_to_HTML(result))
-                    except:
-                        log_func('ERROR', 'WolframAlpha', f"Error: {traceback.format_exc()}")
-                        html = """<div class="alert alert-warning" role="alert">No results</div>"""
-
-                    replacement = f"\x02HTML:{len(html_replacements[-1])}\x03"
-                    html_replacements[-1].append((replacement, html))
-
-                    chart = ET.SubElement(parent, 'div')
-                    chart.text = replacement
-                    return True
-                return False
-
-        class MatplotlibExtension(Extension):
-            def extendMarkdown(self, md):
-                md.parser.blockprocessors.register(_MarkdownRenderer.MatplotlibProcessor(md.parser), 'matplotlib', 184)
-
-        class MatplotlibProcessor(BlockProcessor):
-            def __init__(self, parser):
-                super().__init__(parser)
-                self.MATPLOT_RE = re.compile(r'(?s)<matplotlib_plot>(.*?)</matplotlib_plot>', re.DOTALL | re.MULTILINE)
-
-            def test(self, parent, block):
-                return bool(self.MATPLOT_RE.search(block))
-
-            def run(self, parent, blocks):
-                block = blocks.pop(0)
-                match = self.MATPLOT_RE.search(block)
-                if match:
-                    remaining_blocks = block[match.end():].lstrip()
-                    if remaining_blocks:
-                        blocks.insert(0, remaining_blocks)
-
-                    result = self.process_plot(match)
-                    replacement = f"\x02HTML:{len(html_replacements[-1])}\x03"
-                    html_replacements[-1].append((replacement, result))
-
-                    chart = ET.SubElement(parent, 'div')
-                    chart.text = replacement
-                    return True
-                return False
-
-            def process_plot(self, match):
-                log_func('INFO', 'MatplotlibPlot', "Query:", match.groups())
-                query = match.group(1)
-                try:
-                    result, success = safe_python_executor.safe_exec(query)
-                    if not success:
-                        return f"""<div class="alert alert-warning" role="alert">{result}</div>"""
-                    return f'<img src="data:image/png;base64,{result}" style="display: block; margin: 0 auto;">'
-                except:
-                    log_func('ERROR', 'MatplotlibPlot', f"Error: {traceback.format_exc()}")
-                    return """<div class="alert alert-warning" role="alert">No results</div>"""
-
-        class TableExtension(Extension):
-            def extendMarkdown(self, md):
-                md.parser.blockprocessors.register(_MarkdownRenderer.TableProcessor(md.parser), 'table', 181)
-
-        class TableProcessor(BlockProcessor):
-            RE_TABLE = re.compile(r'^\s*\|(\s*[^|]+\s*\|)+\s*$')
-            RE_SEPARATOR = re.compile(r'^\s*\|\s*:?---+:?\s*\|(?:\s*:?---+:?\s*\|)*\s*$')
-
-            def test(self, parent, block):
-                return bool(self.RE_TABLE.search(block))
-
-            def run(self, parent, blocks):
-                block = blocks.pop(0)
-                rows = block.split('\n')
-                table = ET.SubElement(parent, 'table', attrib={'class': 'table'})
-                thead = ET.SubElement(table, 'thead')
-                tbody = ET.SubElement(table, 'tbody')
-                header = True
-                for row in rows:
-                    if self.RE_SEPARATOR.search(row):
-                        header = False
-                        continue
-                    row_elem = ET.SubElement(thead if header else tbody, 'tr', attrib={'class': 'table-row'})
-                    cells = [cell.strip() for cell in row.strip('|').split('|')]
-                    for cell in cells:
-                        cell_elem = ET.SubElement(row_elem, 'th' if header else 'td', attrib={'class': 'table-cell'})
-                        # cell_elem.text = cell.strip()
-                        # 这里可以进一步处理 Markdown 语法
-                        html = convert_markdown_to_html(cell.strip())
-                        cell_elem.text = html
-
-        class ChecklistPreprocessor(Preprocessor):
-            """处理复选框语法"""
-
-            def run(self, lines):
-                new_lines = []
-                for line in lines:
-                    if line.strip().startswith("- [ ]"):
-                        line = line.replace("- [ ]", '<input type="checkbox" disabled> ')
-                    elif line.strip().startswith("- [x]") or line.strip().startswith("- [X]"):
-                        line = line.replace(
-                            "- [x]", '<input type="checkbox" checked disabled> '
-                        )
-                        line = line.replace(
-                            "- [X]", '<input type="checkbox" checked disabled> '
-                        )
-                    new_lines.append(line)
-                return new_lines
-
-        class ChecklistExtension(Extension):
-            """Checklist Extension"""
-
-            def extendMarkdown(self, md):
-                md.preprocessors.register(_MarkdownRenderer.ChecklistPreprocessor(md), "checklist", 27)
-
     def convert_markdown_to_html(text):
-        try:
-            html_replacements.append([])
-            text = text.encode("utf-8").decode("utf-8")
-            # 使用占位符替换代码块
-            CODE_BLOCK_RE = r'```.*?```|~~~.*?~~~'
-            code_blocks = re.findall(CODE_BLOCK_RE, text, re.DOTALL)
-            placeholders = {}
-            for i, code_block in enumerate(code_blocks):
-                placeholder = f"\x02{{CODE_BLOCK_{i}}}\x03"
-                placeholders[placeholder] = code_block
-                text = text.replace(code_block, placeholder)
-            log_func('INFO', 'MarkdownRenderer', "Text:", text)
-            # 处理Matplot代码
-            MATPLOT_RE = r'(?s)<matplotlib_plot>(.*?)</matplotlib_plot>'
-            matplot_codes = re.findall(MATPLOT_RE, text)
-            for i, code in enumerate(matplot_codes):
-                placeholder = f"\x02{{MATPLOT_{i}}}\x03"
-                log_func('INFO', 'MarkdownRenderer', "Matplot:", code)
-                image_data, success = safe_python_executor.safe_exec(code)
-                if success:
-                    image_base64 = base64.b64encode(image_data).decode()
-                    result = f'![Matplot](data:image/png;base64,{image_base64})'
-                    placeholders[placeholder] = result
-                    text = text.replace(f"<matplotlib_plot>{code}</matplotlib_plot>", placeholder)
-
-            # 处理Typst公式
-            TYPST_RE = r'(?s)<typst>(.*?)</typst>'
-            typst_formulas = re.findall(TYPST_RE, text)
-            for i, formula in enumerate(typst_formulas):
-                log_func('INFO', 'MarkdownRenderer', "Typst:", formula)
-                placeholder = f"\x02{{TYPST_{i}}}\x03"
-                try:
-                    image_data = typst_render.render(
-                        "#set page(width: auto, height: auto, margin: (x: 10pt, y: 10pt))\n" + formula)
-                except:
-                    image_data = None
-                if image_data is not None:
-                    image_base64 = base64.b64encode(image_data).decode()
-                    alt = "Typst Formula"
-                    img_format = "png"
-                    result = f'![Typst](data:image/png;base64,{image_base64})"'
-                    placeholders[placeholder] = result
-                    text = text.replace(f"<typst>{formula}</typst>", placeholder)
-
-            LATEX_RE = r'(?s)((?<!\\)(\$\$).*?(?<!\\)(\$\$)|(?<!\\)\$.+?(?<!\\)\$|(?<!\\)<latex>.+?(?<!\\)</latex>)'
-            # 优先处理LaTeX公式
-            latex_formulas = re.findall(LATEX_RE, text, re.VERBOSE | re.MULTILINE)
-            for formula__ in latex_formulas:
-                if formula__[0].startswith("<latex>"):
-                    formula = formula__[0][7:-8]
-                else:
-                    formula = formula__[0]
-                log_func('INFO', 'MarkdownRenderer', "Formula:", formula)
-                formula_ = formula
-                # formula = re.sub(r'[^\x20-\x7E]', '', formula)
-                image_data = latex.get_formula_image_data(formula)
-                if image_data is not None:
-                    image_base64 = base64.b64encode(image_data, altchars=b'+/').decode()
-                    if formula__[0].startswith("$$"):
-                        # 多行公式
-                        result = f"![LATEX](data:image/png;base64,{image_base64})\n"
-                    elif formula__[0].startswith("$"):
-                        # 单行公式
-                        result = f"![@LATEX](data:image/png;base64,{image_base64})"
-                    else:
-                        # LaTeX标签
-                        result = f"![LATEX](data:image/png;base64,{image_base64})"
-                    text = text.replace(formula__[0], result)
-
-            # 恢复代码块
-            for placeholder, code_block in placeholders.items():
-                text = text.replace(placeholder, code_block)
-
-            md = markdown.Markdown(
-                extensions=[
-                    "extra",
-                    "smarty",
-                    "toc",
-                    "tables",
-                    "attr_list",
-                    "def_list",
-                    "admonition",
-                    "meta",
-                    "nl2br",
-                    "sane_lists",
-                    "wikilinks",
-                    "fenced_code",
-                    "abbr",
-                    "footnotes",
-                    "md_in_html",
-                    _MarkdownRenderer.DelExtension(),
-                    _MarkdownRenderer.InsExtension(),
-                    _MarkdownRenderer.SubExtension(),
-                    _MarkdownRenderer.SupExtension(),
-                    _MarkdownRenderer.MarkExtension(),
-                    _MarkdownRenderer.UnderlineExtension(),
-                    _MarkdownRenderer.SmallExtension(),
-                    _MarkdownRenderer.TtExtension(),
-                    _MarkdownRenderer.ChecklistExtension(),
-                    _MarkdownRenderer.ImgExtension(),
-                    _MarkdownRenderer.TableExtension(),
-                    _MarkdownRenderer.WolframAlphaExtension(),
-                    _MarkdownRenderer.PieChartExtension(),
-                    _MarkdownRenderer.FontExtension(),
-                ]
-            )
-            md.set_output_format("html")
-            html = md.convert(text)
-
-            # 替换HTML中的占位符
-            for i, (placeholder, replacement) in enumerate(html_replacements[-1]):
-                html = html.replace(placeholder, replacement)
-            html_replacements.pop()
-            return html
-        except Exception as e:
-            log_func('ERROR', 'MarkdownRenderer', "Error:", str(e))
-            return f"<div class='alert alert-danger' role='alert'>Error: {str(e)}</div>"
-
+        """简单的Markdown到HTML转换占位函数,实际渲染在浏览器端完成"""
+        return text
+    
     async def render(text):
         log_func('INFO', 'MarkdownRenderer', "Text:", text)
-
-        def convert(text, queue):
-            queue.put(convert_markdown_to_html(text))
-
-        queue = Queue()
-        convert_thread = threading.Thread(target=convert, args=(text, queue))
-        convert_thread.start()
-        while convert_thread.is_alive():
-            await asyncio.sleep(0.1)
-        convert_thread.join()
-        html = queue.get()
-
-        global_styles = """
-<style>
-    body {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
-        line-height: 1.5;
-        color: #24292f;
-        background-color: #ffffff;
-        margin: 16px;
-    }
-    
-    h1, h2, h3, h4, h5, h6 {
-        margin-top: 24px;
-        margin-bottom: 16px;
-        font-weight: 600;
-        line-height: 1.25;
-    }
-    
-    h1 { font-size: 2em; padding-bottom: .3em; border-bottom: 1px solid #eaecef; }
-    h2 { font-size: 1.5em; padding-bottom: .3em; border-bottom: 1px solid #eaecef; }
-    h3 { font-size: 1.25em; }
-    h4 { font-size: 1em; }
-    h5 { font-size: .875em; }
-    h6 { font-size: .85em; color: #57606a; }
-    
-    a {
-        color: #0969da;
-        text-decoration: none;
-    }
-    
-    a:hover {
-        text-decoration: underline;
-    }
-    
-    table {
-        border-spacing: 0;
-        border-collapse: collapse;
-        margin: 16px 0;
-        width: 100%;
-    }
-    
-    th, td {
-        padding: 6px 13px;
-        border: 1px solid #d0d7de;
-    }
-    
-    th {
-        font-weight: 600;
-        background-color: #f6f8fa;
-    }
-    
-    tr:nth-child(2n) {
-        background-color: #f6f8fa;
-    }
-    
-    pre {
-        padding: 16px;
-        overflow: auto;
-        font-size: 85%;
-        line-height: 1.45;
-        background-color: #f6f8fa;
-        border-radius: 6px;
-        margin: 16px 0;
-        font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
-    }
-    
-    code {
-        padding: .2em .4em;
-        margin: 0;
-        font-size: 85%;
-        background-color: rgba(175, 184, 193, 0.2);
-        border-radius: 6px;
-        font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
-    }
-    
-    pre code {
-        padding: 0;
-        margin: 0;
-        background-color: transparent;
-    }
-    
-    blockquote {
-        padding: 0 1em;
-        color: #57606a;
-        border-left: .25em solid #d0d7de;
-        margin: 16px 0;
-    }
-    
-    ul, ol {
-        padding-left: 2em;
-        margin: 16px 0;
-    }
-    
-    img {
-        max-width: 100%;
-        height: auto;
-        border-style: none;
-        margin: 16px 0;
-    }
-    
-    hr {
-        height: .25em;
-        padding: 0;
-        margin: 24px 0;
-        background-color: #d0d7de;
-        border: 0;
-    }
-    
-    input[type="checkbox"] {
-        margin: 0 .2em .25em -1.4em;
-    }
-    
-    del {
-        color: #cf222e;
-    }
-    
-    ins {
-        color: #116329;
-        text-decoration: none;
-        background-color: #dafbe1;
-    }
-    
-    mark {
-        background-color: #fff8c5;
-        color: #24292f;
-    }
-    
-    .alert {
-        padding: 16px;
-        margin: 16px 0;
-        border-radius: 6px;
-        border: 1px solid;
-    }
-    
-    .alert-info {
-        color: #0969da;
-        background-color: #ddf4ff;
-        border-color: #54aeff;
-    }
-    
-    .alert-warning {
-        color: #9a6700;
-        background-color: #fff8c5;
-        border-color: #f3c666;
-    }
-    
-    .alert-danger {
-        color: #cf222e;
-        background-color: #ffebe9;
-        border-color: #ff8182;
-    }
-    
-    .alert-success {
-        color: #116329;
-        background-color: #dafbe1;
-        border-color: #4ac26b;
-    }
-</style>
-        """
-
-        code_highlight = """<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.3.1/styles/default.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.3.1/highlight.min.js"></script>
-    <script>hljs.highlightAll();</script>\n"""
-        html = global_styles + code_highlight + "\n<body>" + html + "</body>"
-
+        
+        # 转义JavaScript字符串中的特殊字符
+        text_escaped = text.replace('\\', '\\\\').replace('`', '\\`').replace('$', '\\$')
+        
+        # 构建HTML - 使用浏览器端渲染
+        html_parts = [
+            '<!DOCTYPE html>',
+            '<html>',
+            '<head>',
+            '    <meta charset="UTF-8">',
+            '    <meta name="viewport" content="width=device-width, initial-scale=1.0">',
+            '    <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>',
+            '    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">',
+            '    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>',
+            '    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>',
+            '    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">',
+            '    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>',
+            '    <style>',
+            '        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; color: #24292f; background: #fff; margin: 20px; padding: 20px; overflow: hidden; }',
+            '        html { overflow: hidden; }',
+            '        * { scrollbar-width: none; -ms-overflow-style: none; }',
+            '        *::-webkit-scrollbar { display: none; }',
+            '        h1, h2, h3, h4, h5, h6 { margin-top: 24px; margin-bottom: 16px; font-weight: 600; line-height: 1.25; }',
+            '        h1 { font-size: 2em; padding-bottom: 0.3em; border-bottom: 1px solid #eaecef; }',
+            '        h2 { font-size: 1.5em; padding-bottom: 0.3em; border-bottom: 1px solid #eaecef; }',
+            '        h3 { font-size: 1.25em; }',
+            '        a { color: #0969da; text-decoration: none; }',
+            '        a:hover { text-decoration: underline; }',
+            '        table { border-collapse: collapse; margin: 16px 0; width: 100%; }',
+            '        th, td { padding: 6px 13px; border: 1px solid #d0d7de; }',
+            '        th { font-weight: 600; background: #f6f8fa; }',
+            '        tr:nth-child(2n) { background: #f6f8fa; }',
+            '        pre { padding: 16px; overflow: hidden; font-size: 85%; background: #f6f8fa; border-radius: 6px; margin: 16px 0; }',
+            '        code { padding: 0.2em 0.4em; font-size: 85%; background: rgba(175,184,193,0.2); border-radius: 6px; }',
+            '        pre code { padding: 0; background: transparent; }',
+            '        blockquote { padding: 0 1em; color: #57606a; border-left: 0.25em solid #d0d7de; margin: 16px 0; }',
+            '        ul, ol { padding-left: 2em; margin: 16px 0; }',
+            '        img { max-width: 100%; height: auto; margin: 16px 0; }',
+            '        .katex { font-size: 1.1em; }',
+            '        .katex-display { margin: 1em 0; text-align: center; }',
+            '        del { text-decoration: line-through; }',
+            '        mark { background: #fff8c5; }',
+            '        input[type="checkbox"] { margin-right: 0.5em; }',
+            '    </style>',
+            '</head>',
+            '<body>',
+            '    <div id="content"></div>',
+            '    <script>',
+            '        marked.setOptions({ breaks: true, gfm: true, highlight: function(code, lang) { if (lang && hljs.getLanguage(lang)) { try { return hljs.highlight(code, { language: lang }).value; } catch(e) {} } return hljs.highlightAuto(code).value; } });',
+            '        const markdownText = `' + text_escaped + '`;',
+            '        const htmlContent = marked.parse(markdownText);',
+            '        document.getElementById("content").innerHTML = htmlContent;',
+            '        renderMathInElement(document.body, { delimiters: [{ left: "$$", right: "$$", display: true }, { left: "$", right: "$", display: false }], throwOnError: false });',
+            '        document.body.setAttribute("data-rendered", "true");',
+            '    </script>',
+            '</body>',
+            '</html>'
+        ]
+        
+        html = '\n'.join(html_parts)
+        
         page = await browser.newPage()
         await page.setViewport({"width": 1024, "height": 1080})
         await page.setContent(html)
-        # 获取最小包围盒的宽度和高度
-        await page.waitForSelector('body')
+        
+        # 等待渲染完成
+        await page.waitForSelector('body[data-rendered="true"]', {'timeout': 10000})
+        await asyncio.sleep(0.5)
+        
+        # 获取内容边界框 - 精确收缩到实际内容
         bounding_box = await page.evaluate('''
             () => {
                 return new Promise((resolve) => {
-                    // 等待字体加载完成
                     document.fonts.ready.then(() => {
-                        const body = document.body;
-                        const elements = body.querySelectorAll('*');
+                        // 只计算content div内的实际内容
+                        const content = document.getElementById('content');
+                        if (!content) {
+                            resolve({ width: 1024, height: 1080 });
+                            return;
+                        }
+                        
+                        // 获取所有有实际内容的元素
+                        const elements = content.querySelectorAll('*');
                         let minX = Infinity, minY = Infinity;
                         let maxX = -Infinity, maxY = -Infinity;
-
+                        
                         elements.forEach(element => {
-                            // 确保元素完全渲染
-                            const range = document.createRange();
-                            range.selectNode(element);
-                            const rect = range.getBoundingClientRect();
-                            const style = window.getComputedStyle(element);
+                            // 跳过空元素
+                            if (element.offsetWidth === 0 || element.offsetHeight === 0) return;
                             
-                            // 获取所有边距值
-                            const margins = {
-                                left: parseFloat(style.marginLeft) || 0,
-                                top: parseFloat(style.marginTop) || 0,
-                                right: parseFloat(style.marginRight) || 0,
-                                bottom: parseFloat(style.marginBottom) || 0
-                            };
+                            const rect = element.getBoundingClientRect();
                             
-                            const borders = {
-                                left: parseFloat(style.borderLeftWidth) || 0,
-                                top: parseFloat(style.borderTopWidth) || 0,
-                                right: parseFloat(style.borderRightWidth) || 0,
-                                bottom: parseFloat(style.borderBottomWidth) || 0
-                            };
-                            
-                            const padding = {
-                                left: parseFloat(style.paddingLeft) || 0,
-                                top: parseFloat(style.paddingTop) || 0,
-                                right: parseFloat(style.paddingRight) || 0,
-                                bottom: parseFloat(style.paddingBottom) || 0
-                            };
-
-                            minX = Math.min(minX, rect.left - margins.left - borders.left - padding.left);
-                            minY = Math.min(minY, rect.top - margins.top - borders.top - padding.top);
-                            maxX = Math.max(maxX, rect.right + margins.right + borders.right + padding.right);
-                            maxY = Math.max(maxY, rect.bottom + margins.bottom + borders.bottom + padding.bottom);
+                            // 只计算实际占用的空间,不包含margin
+                            minX = Math.min(minX, rect.left);
+                            minY = Math.min(minY, rect.top);
+                            maxX = Math.max(maxX, rect.right);
+                            maxY = Math.max(maxY, rect.bottom);
                         });
-
-                        resolve({
-                            width: Math.ceil(maxX - minX),
-                            height: Math.ceil(maxY - minY)
-                        });
+                        
+                        // 检查content本身的边界
+                        const contentRect = content.getBoundingClientRect();
+                        minX = Math.min(minX, contentRect.left);
+                        minY = Math.min(minY, contentRect.top);
+                        maxX = Math.max(maxX, contentRect.right);
+                        maxY = Math.max(maxY, contentRect.bottom);
+                        
+                        // 如果没有找到有效元素,使用content的大小
+                        if (!isFinite(minX)) {
+                            resolve({ 
+                                width: Math.ceil(contentRect.width) + 40, 
+                                height: Math.ceil(contentRect.height) + 40 
+                            });
+                            return;
+                        }
+                        
+                        // 计算实际内容宽高,添加body的padding(40px)
+                        const width = Math.ceil(maxX - minX) + 40;
+                        const height = Math.ceil(maxY - minY) + 40;
+                        
+                        resolve({ width, height });
                     });
                 });
             }
         ''')
+        
         width = bounding_box["width"]
         height = bounding_box["height"]
-        log_func('INFO', 'MarkdownRenderer', "Width:", width)
-        log_func('INFO', 'MarkdownRenderer', "Height:", height)
+        log_func('INFO', 'MarkdownRenderer', f"Width: {width}, Height: {height}")
+        
+        # 设置适配的视口大小并截图(+1避免边缘裁切)
         await page.setViewport({"width": int(width) + 1, "height": int(height) + 1})
-        # save image to variable
-        await page.waitForSelector("body")
-        img = await page.screenshot()
+        img = await page.screenshot({"fullPage": False})
         await page.close()
-        log_func('INFO', 'MarkdownRenderer', "Image Size:", len(img))
+        
+        log_func('INFO', 'MarkdownRenderer', f"Image Size: {len(img)}")
         return img
 
     return render
