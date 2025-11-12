@@ -1,18 +1,9 @@
 import base64
 from typing import Callable, Any
 import asyncio
-import time
-import pathlib
-
-# onion 绑定
-from onion import (
-    eval as onion_eval,
-    eval_or_throw as onion_eval_or_throw,
-    PyOnionObject,
-    wrap_py_function as onion_wrap_py_function,
-    wrap_py_coroutine as onion_wrap_py_coroutine,
-    OnionRuntimeError,
-)
+import os
+import re
+from mutica_py import MuticaType, MuticaGC, MuticaEngine, MuticaError
 
 
 log_func: Callable[[Any], None]
@@ -44,67 +35,33 @@ tools_help = r"""
 快速工具
 - mdr <markdown>: 渲染 markdown 为图片。
 - typst <typst>: 渲染 typst 为图片。
-- $ <onion>: 执行 Onion 代码。
+- $ <mutica>: 执行 Mutica 代码。
 """
 
-# Onion 上下文管理
-class OnionContexts:
+
+# Mutica 上下文管理
+class MuticaContexts:
     def __init__(self):
         self.contexts = {}
+        self.gc = MuticaGC()
 
     def get_context(self, group_id):
         if group_id not in self.contexts:
-            py_context = {}
-
-            def onion_set(self_object, arguments):
-                if len(arguments) != 1:
-                    raise OnionRuntimeError("set() requires exactly one argument")
-                if not arguments[0].is_named():
-                    raise OnionRuntimeError("set() argument must be a named object")
-                k = arguments[0].key()
-                v = arguments[0].value()
-                py_context[k.as_string()] = v
-
-            def onion_get(self_object, arguments):
-                # 返回 dict 形式
-                return PyOnionObject(
-                    [PyOnionObject.named(k, v) for k, v in py_context.items()]
-                )
-
-            def onion_clear(self_object, arguments):
-                py_context.clear()
-
-            wrapped_set = onion_wrap_py_function(
-                PyOnionObject.tuple([]), "<python>::set", onion_set, None, None
-            )
-            wrapped_get = onion_wrap_py_function(
-                PyOnionObject.tuple([]), "<python>::get", onion_get, None, None
-            )
-            wrapped_clear = onion_wrap_py_function(
-                PyOnionObject.tuple([]), "<python>::clear", onion_clear, None, None
-            )
-
+            engine = MuticaEngine()
             self.contexts[group_id] = {
-                "py_context": py_context,
-                "wrapped_set": wrapped_set,
-                "wrapped_get": wrapped_get,
-                "wrapped_clear": wrapped_clear,
+                "engine": engine,
+                "gc": self.gc,
             }
-            log_func("INFO", f"Onion context created for group {group_id}")
+            log_func("INFO", f"Mutica context created for group {group_id}")
         return self.contexts[group_id]
 
     def remove_context(self, group_id):
         if group_id in self.contexts:
-            context = self.contexts[group_id]
-            del context["wrapped_set"]
-            del context["wrapped_get"]
-            del context["wrapped_clear"]
-            del context["py_context"]
             del self.contexts[group_id]
 
 
 class Plugin:
-    onion_contexts = OnionContexts()
+    mutica_contexts = MuticaContexts()
 
     @staticmethod
     def help():
@@ -206,61 +163,98 @@ class Plugin:
                     )
                 raise plugin_context.SkipFollow()
 
-            onion_trigger = "$"
-            if encoded_message.startswith(onion_trigger):
-                onion_code = encoded_message[len(onion_trigger) :]
-                if onion_code.strip() == "clear()":
-                    Plugin.onion_contexts.remove_context(message["group_id"])
+            mutica_trigger = "$"
+            if encoded_message.startswith(mutica_trigger):
+                mutica_code = encoded_message[len(mutica_trigger) :]
+                if mutica_code.strip() == "clear()":
+                    Plugin.mutica_contexts.remove_context(message["group_id"])
                     await api.send_group_message(
-                        message["group_id"], "Onion context cleared!"
+                        message["group_id"], "Mutica context cleared!"
                     )
                     raise plugin_context.SkipFollow()
                 try:
+
+                    def strip_ansi_escape_sequences(text: str) -> str:
+                        """移除字符串中的 ANSI 转义序列。"""
+                        ansi_escape = re.compile(
+                            r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])"
+                        )
+                        return ansi_escape.sub("", text)
+
                     @plugin_context.timeout(10, timeout_callback=timeout_callback)
-                    async def run_onion():
-                        context = Plugin.onion_contexts.get_context(message["group_id"])
-                        # 传递 context 变量
-                        onion_context = [
-                            PyOnionObject.named("let", context["wrapped_set"]),
-                            PyOnionObject.named("context", context["wrapped_get"]),
-                            PyOnionObject.named("clear", context["wrapped_clear"]),
-                        ]
-                        try:
-                            result = await onion_eval_or_throw(
-                                f"""
-Modules := mut ();
-@required stdlib;
-@required let;
-@required context;
+                    async def run_mutica():
+                        nonlocal mutica_code
+                        context = Plugin.mutica_contexts.get_context(
+                            message["group_id"]
+                        )
+                        engine = context["engine"]
+                        gc = context["gc"]
 
-{onion_code}""",
-                                work_dir=str(pathlib.Path(__file__).parent / "modules"),
-                                context=onion_context,
+                        mutica_code = f"""
+let result: any = {{
+{mutica_code}
+}};
+match result
+    | () => ()
+    | _ => put! result
+    | panic
+"""
+                        # chdir 到插件所在目录，确保文件操作正常
+                        current_dir = os.getcwd()
+                        os.chdir(__file__[: __file__.rfind(os.path.sep)])
+                        errors = await engine.load(mutica_code, None, gc)
+                        os.chdir(current_dir)
+                        if errors:
+                            error_messages = "\n".join(
+                                [strip_ansi_escape_sequences(str(e)) for e in errors]
                             )
-                            output = str(result)
-                            if output.strip() == "" or output.strip() == "None":
-                                await api.send_group_message(
-                                    message["group_id"], "Success!"
-                                )
-                            else:
-                                await api.send_group_message(
-                                    message["group_id"], output.strip()
-                                )
-                        except OnionRuntimeError as e:
                             await api.send_group_message(
-                                message["group_id"], f"Onion error: {e}"
+                                message["group_id"],
+                                f"Mutica load error: {error_messages}",
                             )
-                        except Exception as e:
-                            await api.send_group_message(
-                                message["group_id"], f"Failed to run onion: {e}"
-                            )
+                            return
 
-                    await run_onion()
+                        output_buffer = ""
+
+                        async def io_handler(
+                            io: MuticaType, arg: MuticaType
+                        ) -> MuticaType | None:
+                            nonlocal output_buffer
+
+                            io_py = io.as_py()
+                            if not isinstance(io_py, dict):
+                                return None
+                            if not io_py.get("kind") == "Opcode":
+                                return None
+                            io_type = io_py.get("opcode")
+                            if io_type[0] != "IO":
+                                return None
+                            io_name = io_type[1]
+                            match io_name:
+                                case "put":
+                                    output_buffer += str(arg)
+                                    return MuticaType.tuple([])
+                                case "putln":
+                                    output_buffer += str(arg) + "\n"
+                                    return MuticaType.tuple([])
+                                case _:
+                                    return None
+
+                        await engine.set_io_handler(io_handler)
+
+                        while await engine.step(gc):
+                            asyncio.sleep(0)
+
+                        await api.send_group_message(
+                            message["group_id"],
+                            output_buffer,
+                        )
+
+                    await run_mutica()
                 except Exception as e:
                     await api.send_group_message(
-                        message["group_id"], f"Failed to run onion:\n{str(e)}"
+                        message["group_id"], f"Failed to run Mutica:\n{str(e)}"
                     )
-                    raise plugin_context.SkipFollow()
                 raise plugin_context.SkipFollow()
 
         await handler()
