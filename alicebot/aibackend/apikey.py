@@ -12,6 +12,10 @@ class ApiKey:
         self.gemini_index = 0
         self.siliconflow = []
         self.siliconflow_index = 0
+        self.openai_hk = []
+        self.openai_hk_index = 0
+        self.deepseek = []
+        self.deepseek_index = 0
 
     def save(self, path: str):
         """保存配置到文件"""
@@ -33,6 +37,10 @@ class ApiKey:
                     config.gemini_index = data.get("gemini_index", 0)
                     config.siliconflow = data.get("siliconflow", [])
                     config.siliconflow_index = data.get("siliconflow_index", 0)
+                    config.openai_hk = data.get("openai_hk", [])
+                    config.openai_hk_index = data.get("openai_hk_index", 0)
+                    config.deepseek = data.get("deepseek", [])
+                    config.deepseek_index = data.get("deepseek_index", 0)
                 return config
         except Exception as e:
             print(f"[ApiKey] Failed to load config: {e}")
@@ -50,6 +58,20 @@ class ApiKey:
             return None
         key = self.siliconflow[self.siliconflow_index]
         self.siliconflow_index = (self.siliconflow_index + 1) % len(self.siliconflow)
+        return key
+
+    def key_openai_hk(self):
+        if not self.openai_hk:
+            return None
+        key = self.openai_hk[self.openai_hk_index]
+        self.openai_hk_index = (self.openai_hk_index + 1) % len(self.openai_hk)
+        return key
+    
+    def key_deepseek(self):
+        if not self.deepseek:
+            return None
+        key = self.deepseek[self.deepseek_index]
+        self.deepseek_index = (self.deepseek_index + 1) % len(self.deepseek)
         return key
 
 if not os.path.exists(__key_dir):

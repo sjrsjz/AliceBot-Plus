@@ -14,3 +14,4 @@ python_env
 **/logs
 alicebot/config/protocol.json
 alicebot/aibackend/config/swarmui.json
+**/lu_data

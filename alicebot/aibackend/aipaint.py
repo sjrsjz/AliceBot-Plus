@@ -25,6 +25,7 @@ package.load_module("apikey", hot_reload=True, log_func=log_func)
 config_path = pathlib.Path(__file__).parent / "config"
 config_path.mkdir(exist_ok=True)
 
+
 class SwarmConfig:
 
     def __init__(self, swarm_config):
@@ -64,13 +65,20 @@ class SwarmConfig:
         return self.swarm_config.get("swarm_default_model", "text-to-image")
 
     def swarm_anime_negative_prompt(self):
-        return self.swarm_config.get("swarm_anime_negative_prompt", "score_4,score_5,score_3,score_2,score_1,3D,realistic,monochrome,source_pony,source_furry,bad hands,"
-                        "low quality,distorted,worst quality,compression artifacts,artist name,watermark,duplicate,beginner,"
-                        "symmetrical,glitch,overexposed,text,extra fingers,missing fingers,fused fingers,bad-contrast,mutated legs,")
+        return self.swarm_config.get(
+            "swarm_anime_negative_prompt",
+            "score_4,score_5,score_3,score_2,score_1,3D,realistic,monochrome,source_pony,source_furry,bad hands,"
+            "low quality,distorted,worst quality,compression artifacts,artist name,watermark,duplicate,beginner,"
+            "symmetrical,glitch,overexposed,text,extra fingers,missing fingers,fused fingers,bad-contrast,mutated legs,",
+        )
 
     def swarm_photo_negative_prompt(self):
-        return self.swarm_config.get("swarm_photo_negative_prompt", "cartoon, anime, illustration, painting, drawing, art, sketch, oil painting, 3d render, blurry, deformed,"
-                        "disfigured, bad anatomy, bad hands, missing fingers, extra limbs, extra fingers")
+        return self.swarm_config.get(
+            "swarm_photo_negative_prompt",
+            "cartoon, anime, illustration, painting, drawing, art, sketch, oil painting, 3d render, blurry, deformed,"
+            "disfigured, bad anatomy, bad hands, missing fingers, extra limbs, extra fingers",
+        )
+
 
 swarm_config = SwarmConfig(config_path / "swarmui.json")
 
@@ -81,6 +89,21 @@ class ImageSize(enum.Enum):
     SQUARE = "1024x1024"
 
 
+class ImageRatio(enum.Enum):
+    RATIO_1_1 = "1x1"
+    RATIO_9_16 = "9x16"
+    RATIO_16_9 = "16x9"
+
+
+def size_to_ratio(size: ImageSize) -> ImageRatio:
+    if size == ImageSize.TALL:
+        return ImageRatio.RATIO_9_16
+    elif size == ImageSize.WIDE:
+        return ImageRatio.RATIO_16_9
+    else:
+        return ImageRatio.RATIO_1_1
+
+
 class ImageStyle(enum.Enum):
     ANIME = "anime"
     PHOTO = "photo"
@@ -89,6 +112,14 @@ class ImageStyle(enum.Enum):
 class APILevel:
     FREE = "free"
     PRO = "pro"
+
+
+class NanoBananaModel(enum.Enum):
+    """Nano-Banana-2 模型变体"""
+
+    STANDARD = "nano-banana-2"
+    HD_2K = "nano-banana-2-2k"
+    HD_4K = "nano-banana-2-4k"
 
 
 class SwarmAPI:
@@ -144,7 +175,6 @@ class SwarmAPI:
         width = int(width)
         height = int(height)
 
-
         request_data = {
             "images": 1,
             "session_id": cls.session,
@@ -182,10 +212,13 @@ class SwarmAPI:
     async def check_is_available():
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(swarm_config.swarm_api_address(), timeout=5) as response:
+                async with session.get(
+                    swarm_config.swarm_api_address(), timeout=5
+                ) as response:
                     return response.status == 200
         except:
             return False
+
 
 async def generate_image_swarm(
     prompt, size: ImageSize, style: ImageStyle, api_level: APILevel, seed=None, step=30
@@ -224,7 +257,8 @@ async def generate_image_siliconflow(
     if api_level == APILevel.FREE:
         model = "black-forest-labs/FLUX.1-schnell"
     elif api_level == APILevel.PRO:
-        model = "black-forest-labs/FLUX.1-dev"
+        # model = "black-forest-labs/FLUX.1-dev"
+        model = "Qwen/Qwen-Image"
     else:
         raise ValueError("Invalid API level")
 
@@ -254,14 +288,131 @@ async def generate_image_siliconflow(
             return await image_data.read()
 
 
-async def generate_image(
-    prompt, size: ImageSize, style: ImageStyle, api_level: APILevel, seed=None, step=20
+async def generate_image_nanobanana2(
+    prompt,
+    style: ImageStyle,
+    api_level: APILevel,
+    model_variant: NanoBananaModel = NanoBananaModel.STANDARD,
+    ratio: ImageRatio = ImageRatio.RATIO_1_1,
 ):
+    """使用 Nano-Banana-2 模型通过 OpenAI-HK API 生成图像"""
+    url = "https://api.openai-hk.com/v1/images/generations"
+
+    # 根据样式调整提示词
+    if style == ImageStyle.ANIME:
+        final_prompt = f"anime style, {prompt}"
+    elif style == ImageStyle.PHOTO:
+        final_prompt = f"photo-realistic, {prompt}"
+    else:
+        final_prompt = prompt
+
+    payload = {
+        "model": model_variant.value,
+        "prompt": final_prompt,
+        "n": 1,
+        "size": ratio.value,
+        "quality": "high" if api_level == APILevel.PRO else "low",
+    }
+
+    log_func(
+        "INFO",
+        "Nano-Banana-2 API",
+        f"Generating image with prompt: {final_prompt}, model: {model_variant.value}",
+    )
+
+    headers = {
+        "Authorization": f"Bearer {package['apikey'].config.key_openai_hk()}",
+        "Content-Type": "application/json",
+    }
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, json=payload) as response:
+            # 检查HTTP状态码
+            if response.status != 200:
+                error_text = await response.text()
+                log_func("ERROR", "Nano-Banana-2 API", f"HTTP {response.status}: {error_text}")
+                raise Exception(
+                    f"API returned HTTP {response.status}: {error_text}"
+                )
+
+            try:
+                result = await response.json()
+            except Exception as e:
+                error_text = await response.text()
+                log_func("ERROR", "Nano-Banana-2 API", f"Failed to parse JSON response: {e}, Response: {error_text}")
+                raise Exception(f"Invalid JSON response from API: {error_text}")
+
+            log_func("INFO", "Nano-Banana-2 API", f"Result: {result}")
+
+            if "error" in result:
+                raise Exception(
+                    f"API Error: {result.get('error', {}).get('message', 'Unknown error')}"
+                )
+
+            image_url = result["data"][0]["url"]
+            async with session.get(image_url) as image_response:
+                return await image_response.read()
+
+
+async def generate_image(
+    prompt,
+    size: ImageSize,
+    style: ImageStyle,
+    api_level: APILevel,
+    seed=None,
+    step=20,
+):
+    """
+    生成图像的主函数
+
+    Args:
+        prompt: 图像描述提示词
+        size: 图像大小（ImageSize 枚举值）
+        style: 图像风格（ImageStyle 枚举值）
+        api_level: API 级别（FREE 或 PRO）
+        seed: 随机种子（可选）
+        step: 生成步数（可选）
+        use_nanobanana2: 是否使用 Nano-Banana-2 模型（默认 False）
+        model_variant: 使用的 Nano-Banana-2 模型变体（默认为标准版）
+
+    Returns:
+        图像的二进制数据
+    """
     if await SwarmAPI.check_is_available():
         try:
-            return await generate_image_swarm(prompt, size, style, api_level, seed, step = 30)  # 30 steps for better quality
+            return await generate_image_swarm(
+                prompt, size, style, api_level, seed, step=30
+            )  # 30 steps for better quality
         except Exception as e:
-            log_func("ERROR", "SwarmAPI", f"Error generating image: {e}, falling back to SiliconFlow")
-            return await generate_image_siliconflow(prompt, size, style, api_level, seed, step)
+            log_func(
+                "ERROR",
+                "SwarmAPI",
+                f"Error generating image: {e}, falling back to SiliconFlow",
+            )
+            try:
+                return await generate_image_nanobanana2(
+                    prompt, size, api_level, NanoBananaModel.STANDARD, size_to_ratio(size)
+                )
+            except Exception as e:
+                log_func(
+                    "ERROR",
+                    "Nano-Banana-2 API",
+                    f"Error generating image: {e}, falling back to SiliconFlow",
+                )
+                return await generate_image_siliconflow(
+                    prompt, size, style, api_level, seed, step
+                )
     else:
-        return await generate_image_siliconflow(prompt, size, style, api_level, seed, step)
+        try:
+            return await generate_image_nanobanana2(
+                prompt, size, api_level, NanoBananaModel.STANDARD, size_to_ratio(size)
+            )
+        except Exception as e:
+            log_func(
+                "ERROR",
+                "Nano-Banana-2 API",
+                f"Error generating image: {e}, falling back to SiliconFlow",
+            )
+            return await generate_image_siliconflow(
+                prompt, size, style, api_level, seed, step
+            )

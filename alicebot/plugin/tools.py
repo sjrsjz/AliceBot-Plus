@@ -28,6 +28,12 @@ document_renderer = document_renderer_package.load_module(
     "renderer", hot_reload=True, log_func=log_func
 )
 
+aibackend_package = moduleloader.ModuleLoader(
+    plugin_context.aibackend_package_path, log_func=log_func
+)
+aibackend_package.load_module("aipaint", hot_reload=True, log_func=log_func)
+aibackend_package.load_module("apikey", hot_reload=True, log_func=log_func)
+
 
 entity_name = "Tools"
 
@@ -36,6 +42,7 @@ tools_help = r"""
 - mdr <markdown>: 渲染 markdown 为图片。
 - typst <typst>: 渲染 typst 为图片。
 - $ <mutica>: 执行 Mutica 代码。
+- test-gen-image-size <style> <size> <prompt>: 测试图片生成（支持 nano-banana-2）。
 """
 
 
@@ -256,5 +263,86 @@ match result
                         message["group_id"], f"Failed to run Mutica:\n{str(e)}"
                     )
                 raise plugin_context.SkipFollow()
+
+            # # 测试图片生成命令
+            # test_gen_trigger = "test-gen-image-size "
+            # if encoded_message.startswith(test_gen_trigger):
+            #     test_command = encoded_message[len(test_gen_trigger):].strip()
+                
+            #     # 解析命令格式: <style> <size> <prompt>
+            #     # 例如: anime tall a beautiful girl
+            #     parts = test_command.split(maxsplit=2)
+                
+            #     if len(parts) < 3:
+            #         await api.send_group_message(
+            #             message["group_id"],
+            #             "使用方法: test-gen-image-size <style> <size> <prompt>\n"
+            #             "style: anime 或 photo\n"
+            #             "size: tall, wide, 或 square\n"
+            #             "prompt: 图片描述（英文）"
+            #         )
+            #         raise plugin_context.SkipFollow()
+                
+            #     style_str, size_str, prompt = parts[0], parts[1], parts[2]
+                
+            #     try:
+            #         # 解析样式
+            #         if style_str.lower() == "anime":
+            #             style = aibackend_package["aipaint"].ImageStyle.ANIME
+            #         elif style_str.lower() == "photo":
+            #             style = aibackend_package["aipaint"].ImageStyle.PHOTO
+            #         else:
+            #             await api.send_group_message(
+            #                 message["group_id"],
+            #                 f"无效的风格: {style_str}，支持: anime, photo"
+            #             )
+            #             raise plugin_context.SkipFollow()
+                    
+            #         # 解析大小
+            #         if size_str.lower() == "tall":
+            #             size = aibackend_package["aipaint"].ImageSize.TALL
+            #         elif size_str.lower() == "wide":
+            #             size = aibackend_package["aipaint"].ImageSize.WIDE
+            #         elif size_str.lower() == "square":
+            #             size = aibackend_package["aipaint"].ImageSize.SQUARE
+            #         else:
+            #             await api.send_group_message(
+            #                 message["group_id"],
+            #                 f"无效的大小: {size_str}，支持: tall, wide, square"
+            #             )
+            #             raise plugin_context.SkipFollow()
+                    
+            #         await api.send_group_message(
+            #             message["group_id"],
+            #             f"正在生成图片...\n风格: {style_str}\n大小: {size_str}\n提示词: {prompt}"
+            #         )
+                    
+            #         # 调用图片生成函数（使用 nano-banana-2）
+            #         result = await aibackend_package["aipaint"].generate_image(
+            #             prompt,
+            #             size,
+            #             style,
+            #             aibackend_package["aipaint"].APILevel.PRO,
+            #         )
+                    
+            #         await api.send_group_message(
+            #             message["group_id"],
+            #             message={
+            #                 "type": "image",
+            #                 "data": {
+            #                     "file": f"base64://{base64.b64encode(result).decode()}"
+            #                 },
+            #             },
+            #         )
+            #         log_func("INFO", entity_name, f"成功生成图片: {style_str} {size_str} {prompt}")
+                    
+            #     except Exception as e:
+            #         await api.send_group_message(
+            #             message["group_id"],
+            #             f"生成图片失败:\n{str(e)}"
+            #         )
+            #         log_func("ERROR", entity_name, f"生成图片错误: {e}")
+                
+            #     raise plugin_context.SkipFollow()
 
         await handler()

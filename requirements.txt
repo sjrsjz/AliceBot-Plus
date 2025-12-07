@@ -24,7 +24,7 @@ rich
 
 psutil
 
-autogemini
+git+https://github.com/sjrsjz/AutoGemini.git
 html2text
 
 git+https://github.com/sjrsjz/mutica-py.git

@@ -23,9 +23,14 @@
         "tools": {
             "active": 1,
             "permission": 0,
-            "priority": 1
+            "priority": 2
         },
         "danbooru": {
+            "active": 1,
+            "permission": 0,
+            "priority": 1
+        },
+        "lu": {
             "active": 1,
             "permission": 0,
             "priority": 1

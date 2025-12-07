@@ -2,7 +2,7 @@
 
 import pathlib
 import fJson as fjson
-import json  # 新增：标准JSON支持
+import json
 import time
 import traceback
 import base64
@@ -10,21 +10,19 @@ import os
 import asyncio
 import aiohttp
 import random
-import bs4  # BeautifulSoup for HTML parsing
+import bs4
 from threading import Lock
 from typing import Callable, Any, List, Optional, Dict
 from bs4 import BeautifulSoup
-from urllib.parse import urlparse  # <--- 添加这行
-import ipaddress  # <--- 添加这行
+from urllib.parse import urlparse
+import ipaddress
 import html2text
 
 log_func: Callable[[Any], None]
 plugin_context: Any  # 插件上下文，由插件管理器传入
 
-# --- All original package loaders remain unchanged ---
 from loader import moduleloader
 
-# ... (all your existing module loaders are here)
 onebot_package = moduleloader.ModuleLoader(
     plugin_context.onebot_package_path, log_func=log_func
 )
@@ -62,8 +60,9 @@ example_typeset_package.load_module("QQBot", hot_reload=True, log_func=log_func)
 
 from autogemini.auto_stream_processor import create_cot_processor, CallbackMsgType
 from autogemini.tool_code import DefaultApi
-from autogemini.template import ToolCodeInfo, parse_agent_output
+from autogemini import ToolCodeInfo, parse_agent_output
 from autogemini.gemini_chat import ChatMessage, MessageRole, MediaFile
+from autogemini import APIType
 
 from plugin.util import online_py_executor
 from plugin.util import mathworld
@@ -83,8 +82,9 @@ def get_default_system_instruction():
     return example_prompt_package["Alice"].character
 
 
-def get_gemini_key():
-    return aibackend_package["apikey"].config.key_gemini()
+def get_api_key():
+    # return aibackend_package["apikey"].config.key_gemini()
+    return aibackend_package["apikey"].config.key_deepseek()
 
 
 class ContextManager:
@@ -780,6 +780,14 @@ def get_agent_tool_codes() -> List[ToolCodeInfo]:
                 "reason": "The reason for the ban (optional, for logging purposes).",
             },
         ),
+        ToolCodeInfo(
+            name="onebot_v11_api_call",
+            description="Makes a direct OneBot v11 API call to interact with the chat platform.",
+            detail="This tool allows you to call any OneBot v11 API endpoint directly. Use this for advanced interactions not covered by other tools.",
+            args={
+                "json_data": "A dictionary representing the JSON data to send in the OneBot v11 API call. Example: {'action': 'send_msg', 'params': {'group_id': 123456, 'message': 'Hello!'}}"
+            },
+        ),
     ]
 
 
@@ -942,6 +950,28 @@ async def create_agent_api_handler(group_id: int = None, api=None) -> DefaultApi
                         f"Error banning user {user_id}: {e}",
                     )
                     return f"[Ban User Error] Failed to ban user: {e}"
+            elif method_name == "onebot_v11_api_call":
+                json_data = first_arg
+                if not isinstance(json_data, dict):
+                    return (
+                        "[OneBot v11 API Call Error] 'json_data' must be a dictionary."
+                    )
+
+                if not api:
+                    return "[OneBot v11 API Call Error] API instance not available."
+
+                try:
+                    response = await api.direct(json_data)
+                    return str(response)
+                except Exception as e:
+                    log_func(
+                        "ERROR",
+                        entity_name,
+                        f"Error in OneBot v11 API call: {e}",
+                    )
+                    return (
+                        f"[OneBot v11 API Call Error] Failed to execute API call: {e}"
+                    )
             else:
                 return f"[Error] Unknown tool called: {method_name}"
         except Exception as e:
@@ -1240,6 +1270,12 @@ Sometimes you may display rich media content using these tags to perform specifi
    - **Attributes:** `src` - The full, direct URL to the image file (e.g., .png, .jpg, .gif).
    - **Example:** `<image src="https://www.google.com/images/branding/googlelogo/1x/googlelogo_color_272x92dp.png" />`
 
+**6. At or Mention a User:**
+    - **Tag:** `<at qq="..." />`
+    - **Purpose:** Mentions a user in the group chat.
+    - **Attributes:** `qq` - The QQ number of the user to mention.
+    - **Example:** `<at qq="123456789" />`
+
 ---
 ### **Final Instruction**
 Your entire final response must be composed using a sequence of the tags described above.
@@ -1367,6 +1403,14 @@ def get_typeset_handler(api, browser):
             log_func("ERROR", entity_name, f"Error processing image URL {url}: {e}")
             return f"[图片错误: 处理时发生未知异常]"
 
+    async def handle_at_user(tag: BeautifulSoup) -> str:
+        qq_number = tag.get("qq")
+        try:
+            qq_number = int(qq_number)
+            return f"[CQ:at,qq={qq_number}]"
+        except (ValueError, TypeError):
+            return f"@{qq_number}"
+
     return {
         "DocumentRender": handle_markdown_render,
         "shut_up": handle_shut_up,
@@ -1374,6 +1418,7 @@ def get_typeset_handler(api, browser):
         "display_wolframalpha": handle_wolfram,
         "graphic_art_in_English": handle_graphic_art,
         "image_from_url": handle_image_from_url,
+        "at_user": handle_at_user,
     }
 
 
@@ -1470,6 +1515,11 @@ async def handle_agent_output(
     # <image src="...">
     for tag in soup.find_all("image"):
         result_cq = await legacy_handlers["image_from_url"](tag)
+        tag.replace_with(result_cq)
+
+    # <at qq="...">
+    for tag in soup.find_all("at"):
+        result_cq = await legacy_handlers["at_user"](tag)
         tag.replace_with(result_cq)
 
     remaining_html = str(soup)
@@ -1865,11 +1915,11 @@ Powered by ✨Gemini-Flash-2.5 via AutoGemini Agent
                 agent_api_handler = await create_agent_api_handler(group_id, api)
                 agent_tool_codes = get_agent_tool_codes()
 
-                gemini_api_key = get_gemini_key()
-                if not gemini_api_key:
+                ai_api_key = get_api_key()
+                if not ai_api_key:
                     await api.withdraw_message(message_id)
                     await api.send_group_message(
-                        group_id, "错误：机器人未配置Gemini API Key。"
+                        group_id, "错误：机器人未配置API Key。"
                     )
                     log_func(
                         "ERROR",
@@ -1886,17 +1936,21 @@ Your own QQ number is [CQ:at,qq={message['self_id']}]
 
                 # 5. Create a new agent processor for this specific request.
                 processor = create_cot_processor(
-                    api_key=gemini_api_key,
+                    api_key=ai_api_key,
                     default_api=agent_api_handler,
                     tool_codes=agent_tool_codes,
                     character_description=addtitional_prompt
                     + "\n"
                     + group_context["ai_params"]["system_instruction"],
                     respond_tags_description=CUSTOM_TAGS_PROMPT,
-                    model="gemini-2.5-flash",
+                    model="deepseek-chat",
                     temperature=1.0,
-                    max_tokens=65536,
+                    max_tokens=8192,
                     api_delay=5.0,
+                    api_type=APIType.OPENAI,
+                    base_url="https://api.deepseek.com",
+                    presence_penalty=0.0,
+                    enable_multimodal=False,
                 )
 
                 # 6. Load the conversation history into the agent.
@@ -1905,6 +1959,8 @@ Your own QQ number is [CQ:at,qq={message['self_id']}]
                 # 7. Define a simple callback for debugging the agent's internal steps.
                 async def stream_callback(chunk: Any, msg_type: CallbackMsgType):
                     log_func("DEBUG", f"Agent-{msg_type.name}", str(chunk))
+                async def raw_stream_callback(response):
+                    log_func("DEBUG", f"Agent-RAW", str(response))
 
                 # 8. 创建包含媒体文件的当前用户消息
                 current_user_chat_message = ChatMessage(
@@ -1986,6 +2042,7 @@ Your own QQ number is [CQ:at,qq={message['self_id']}]
                     # 直接调用_process_with_toolcode_loop进行处理
                     final_response = await processor._process_with_toolcode_loop(
                         callback=stream_callback,
+                        raw_response_callback=raw_stream_callback,
                         tool_code_timeout=90.0,
                         max_cycle_cost=5,
                     )

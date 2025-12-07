@@ -160,6 +160,24 @@ class OneBotAPI:
             return response["data"]
         log_func('ERROR', 'OneBot', "Failed to get group info")
         return None
+    
+    async def get_group_member_info(self, group_id, user_id, no_cache=True):
+        if self.echo_pool.echo_dict is None: raise Exception("Echo dict not set")
+        log_func('INFO', 'OneBot', "Getting group member info:", user_id, "in group:", group_id)
+        json_data = {
+            "action": "get_group_member_info",
+            "params": {
+                "group_id": group_id,
+                "user_id": user_id,
+                "no_cache": no_cache
+            },
+        }
+        response = await self._make_request(json_data)
+        if "data" in response and response["data"] is not None:
+            log_func('INFO', 'OneBot', "Successfully got group member info")
+            return response["data"]
+        log_func('ERROR', 'OneBot', "Failed to get group member info")
+        return None
 
     async def withdraw_message(self, message_id):
         if self.echo_pool.echo_dict is None: raise Exception("Echo dict not set")
@@ -198,3 +216,10 @@ class OneBotAPI:
                 return True
         log_func('ERROR', 'OneBot', "Failed to ban user")
         return None
+    
+    async def direct(self, json_data):
+        if self.echo_pool.echo_dict is None: raise Exception("Echo dict not set")
+        log_func('INFO', 'OneBot', "Directly sending JSON data")
+        response = await self._make_request(json_data)
+        log_func('INFO', 'OneBot', f"Direct request completed with response: {response}")
+        return response
