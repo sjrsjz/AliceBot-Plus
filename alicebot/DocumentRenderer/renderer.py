@@ -278,12 +278,20 @@ def MarkdownRenderer(browser):
             '<body>',
             '    <div id="content"></div>',
             '    <script>',
-            '        marked.setOptions({ breaks: true, gfm: true, highlight: function(code, lang) { if (lang && hljs.getLanguage(lang)) { try { return hljs.highlight(code, { language: lang }).value; } catch(e) {} } return hljs.highlightAuto(code).value; } });',
-            '        const markdownText = `' + text_escaped + '`;',
-            '        const htmlContent = marked.parse(markdownText);',
-            '        document.getElementById("content").innerHTML = htmlContent;',
-            '        renderMathInElement(document.body, { delimiters: [{ left: "$$", right: "$$", display: true }, { left: "$", right: "$", display: false }], throwOnError: false });',
-            '        document.body.setAttribute("data-rendered", "true");',
+            '        try {',
+            '            marked.setOptions({ breaks: true, gfm: true, highlight: function(code, lang) { if (lang && hljs.getLanguage(lang)) { try { return hljs.highlight(code, { language: lang }).value; } catch(e) {} } return hljs.highlightAuto(code).value; } });',
+            '            const markdownText = `' + text_escaped + '`;',
+            '            const htmlContent = marked.parse(markdownText);',
+            '            document.getElementById("content").innerHTML = htmlContent;',
+            '            if (typeof renderMathInElement !== "undefined") {',
+            '                renderMathInElement(document.body, { delimiters: [{ left: "$$", right: "$$", display: true }, { left: "$", right: "$", display: false }], throwOnError: false });',
+            '            }',
+            '            document.body.setAttribute("data-rendered", "true");',
+            '        } catch (e) {',
+            '            console.error("Render error:", e);',
+            '            document.body.innerHTML = "<h1>Render Error</h1><pre>" + e.toString() + "</pre>";',
+            '            document.body.setAttribute("data-rendered", "true"); // 即使出错也标记完成，避免死等',
+            '        }',
             '    </script>',
             '</body>',
             '</html>'
@@ -292,64 +300,65 @@ def MarkdownRenderer(browser):
         html = '\n'.join(html_parts)
         
         page = await browser.newPage()
+        
+        # 监听浏览器控制台和错误，方便调试
+        page.on("console", lambda msg: log_func('DEBUG', 'BrowserConsole', f"{msg.type}: {msg.text}"))
+        page.on("pageerror", lambda exc: log_func('ERROR', 'BrowserPageError', str(exc)))
+        
         await page.setViewport({"width": 1024, "height": 1080})
         await page.setContent(html)
         
-        # 等待渲染完成
-        await page.waitForSelector('body[data-rendered="true"]', {'timeout': 10000})
+        # 等待渲染完成，增加超时时间到 60s
+        try:
+            await page.waitForSelector('body[data-rendered="true"]', {'timeout': 60000})
+        except Exception as e:
+            log_func('ERROR', 'MarkdownRenderer', "Render timeout or failed. Check BrowserPageError logs above.")
+            # 尝试获取页面内容以便调试
+            content = await page.content()
+            log_func('DEBUG', 'MarkdownRenderer', f"Page content at failure: {content[:500]}...")
+            await page.close()
+            raise e
+
         await asyncio.sleep(0.5)
         
         # 获取内容边界框 - 精确收缩到实际内容
         bounding_box = await page.evaluate('''
             () => {
                 return new Promise((resolve) => {
-                    document.fonts.ready.then(() => {
-                        // 只计算content div内的实际内容
-                        const content = document.getElementById('content');
-                        if (!content) {
-                            resolve({ width: 1024, height: 1080 });
-                            return;
-                        }
-                        
-                        // 获取所有有实际内容的元素
-                        const elements = content.querySelectorAll('*');
-                        let minX = Infinity, minY = Infinity;
-                        let maxX = -Infinity, maxY = -Infinity;
-                        
-                        elements.forEach(element => {
-                            // 跳过空元素
-                            if (element.offsetWidth === 0 || element.offsetHeight === 0) return;
+                    // 等待图片加载
+                    const images = Array.from(document.images);
+                    const imagePromises = images.map(img => {
+                        if (img.complete) return Promise.resolve();
+                        return new Promise(r => { img.onload = r; img.onerror = r; });
+                    });
+
+                    Promise.all(imagePromises).then(() => {
+                        document.fonts.ready.then(() => {
+                            const content = document.getElementById('content');
+                            if (!content) {
+                                resolve({ width: 1024, height: 1080 });
+                                return;
+                            }
                             
-                            const rect = element.getBoundingClientRect();
+                            const range = document.createRange();
+                            range.selectNodeContents(content);
+                            const rect = range.getBoundingClientRect();
                             
-                            // 只计算实际占用的空间,不包含margin
-                            minX = Math.min(minX, rect.left);
-                            minY = Math.min(minY, rect.top);
-                            maxX = Math.max(maxX, rect.right);
-                            maxY = Math.max(maxY, rect.bottom);
+                            if (rect.width === 0 && rect.height === 0) {
+                                resolve({ width: 1024, height: 1080 });
+                                return;
+                            }
+
+                            // 获取body的padding/margin
+                            const style = window.getComputedStyle(document.body);
+                            const rightSpace = parseFloat(style.marginRight) + parseFloat(style.paddingRight);
+                            const bottomSpace = parseFloat(style.marginBottom) + parseFloat(style.paddingBottom);
+                            
+                            const width = Math.ceil(rect.right + rightSpace);
+                            const height = Math.ceil(rect.bottom + bottomSpace);
+                            
+                            resolve({ width, height });
                         });
-                        
-                        // 检查content本身的边界
-                        const contentRect = content.getBoundingClientRect();
-                        minX = Math.min(minX, contentRect.left);
-                        minY = Math.min(minY, contentRect.top);
-                        maxX = Math.max(maxX, contentRect.right);
-                        maxY = Math.max(maxY, contentRect.bottom);
-                        
-                        // 如果没有找到有效元素,使用content的大小
-                        if (!isFinite(minX)) {
-                            resolve({ 
-                                width: Math.ceil(contentRect.width) + 40, 
-                                height: Math.ceil(contentRect.height) + 40 
-                            });
-                            return;
-                        }
-                        
-                        // 计算实际内容宽高,添加body的padding(40px)
-                        const width = Math.ceil(maxX - minX) + 40;
-                        const height = Math.ceil(maxY - minY) + 40;
-                        
-                        resolve({ width, height });
                     });
                 });
             }
