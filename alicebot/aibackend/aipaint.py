@@ -257,8 +257,8 @@ async def generate_image_siliconflow(
     if api_level == APILevel.FREE:
         model = "black-forest-labs/FLUX.1-schnell"
     elif api_level == APILevel.PRO:
-        # model = "black-forest-labs/FLUX.1-dev"
-        model = "Qwen/Qwen-Image"
+        model = "black-forest-labs/FLUX.1-dev"
+        #   model = "Qwen/Qwen-Image"
     else:
         raise ValueError("Invalid API level")
 

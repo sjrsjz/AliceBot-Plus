@@ -16,6 +16,10 @@ class ApiKey:
         self.openai_hk_index = 0
         self.deepseek = []
         self.deepseek_index = 0
+        self.yunwuapi = []
+        self.yunwuapi_index = 0
+        self.bolatuapi = []
+        self.bolatuapi_index = 0
 
     def save(self, path: str):
         """保存配置到文件"""
@@ -41,6 +45,10 @@ class ApiKey:
                     config.openai_hk_index = data.get("openai_hk_index", 0)
                     config.deepseek = data.get("deepseek", [])
                     config.deepseek_index = data.get("deepseek_index", 0)
+                    config.yunwuapi = data.get("yunwuapi", [])
+                    config.yunwuapi_index = data.get("yunwuapi_index", 0)
+                    config.bolatuapi = data.get("bolatuapi", [])
+                    config.bolatuapi_index = data.get("bolatuapi_index", 0)
                 return config
         except Exception as e:
             print(f"[ApiKey] Failed to load config: {e}")
@@ -72,6 +80,20 @@ class ApiKey:
             return None
         key = self.deepseek[self.deepseek_index]
         self.deepseek_index = (self.deepseek_index + 1) % len(self.deepseek)
+        return key
+    
+    def key_yunwuapi(self):
+        if not self.yunwuapi:
+            return None
+        key = self.yunwuapi[self.yunwuapi_index]
+        self.yunwuapi_index = (self.yunwuapi_index + 1) % len(self.yunwuapi)
+        return key
+
+    def key_bolatu(self):
+        if not self.bolatuapi:
+            return None
+        key = self.bolatuapi[self.bolatuapi_index]
+        self.bolatuapi_index = (self.bolatuapi_index + 1) % len(self.bolatuapi)
         return key
 
 if not os.path.exists(__key_dir):

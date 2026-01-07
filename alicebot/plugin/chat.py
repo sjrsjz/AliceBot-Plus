@@ -17,6 +17,8 @@ from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 import ipaddress
 import html2text
+import chromadb
+from chromadb.config import Settings
 
 log_func: Callable[[Any], None]
 plugin_context: Any  # 插件上下文，由插件管理器传入
@@ -76,6 +78,36 @@ context_temp_file = context_temp_path / "context_temp.json"  # 新格式：JSON
 context_temp_file_legacy = context_temp_path / "context_temp.fjson"  # 旧格式：fJson
 profile_path = pathlib.Path(__file__).parent / "profiles"
 profile_path.mkdir(parents=True, exist_ok=True)
+vector_db_path = pathlib.Path(__file__).parent / "vector_db"
+vector_db_path.mkdir(parents=True, exist_ok=True)
+
+STREAM_CONTEXT_MAX_LENGTH = 30  # 流式上下文的最大消息数量
+MAIN_CONTEXT_MAX_LENGTH = 30  # 主对话上下文的最大消息数量（AI和用户的直接对话）
+
+
+def is_sensitive_word_error(error_message: str) -> bool:
+    """
+    检测错误消息是否为敏感词错误
+
+    Args:
+        error_message: 错误消息字符串
+
+    Returns:
+        如果是敏感词错误返回True，否则返回False
+    """
+    sensitive_patterns = [
+        "sensitive words detected",
+        "sensitive_words",
+        "内容违规",
+        "违反政策",
+        "sensitive content",
+        "sensitive",
+        "敏感词",
+        "status 500",
+    ]
+
+    error_lower = str(error_message).lower()
+    return any(pattern.lower() in error_lower for pattern in sensitive_patterns)
 
 
 def get_default_system_instruction():
@@ -84,7 +116,360 @@ def get_default_system_instruction():
 
 def get_api_key():
     # return aibackend_package["apikey"].config.key_gemini()
-    return aibackend_package["apikey"].config.key_deepseek()
+    return aibackend_package["apikey"].config.key_bolatu()
+
+
+async def get_text_embedding(text: str) -> List[float]:
+    """
+    生成文本的向量嵌入 (使用SiliconFlow API)
+
+    使用SiliconFlow的BAAI/bge-large-zh-v1.5模型进行文本向量化
+    该模型专门针对中文优化,输出1024维向量
+
+    Args:
+        text: 需要向量化的文本
+
+    Returns:
+        文本的向量表示(1024维)
+    """
+    try:
+        # 获取API密钥
+        api_key = aibackend_package["apikey"].config.key_siliconflow()
+
+        # SiliconFlow embedding API endpoint
+        url = "https://api.siliconflow.cn/v1/embeddings"
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+        payload = {
+            "model": "Qwen/Qwen3-Embedding-0.6B",  # 1024维中文embedding模型
+            "input": text,
+            "encoding_format": "float",
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as response:
+                response.raise_for_status()
+                result = await response.json()
+                embedding = result["data"][0]["embedding"]
+                return embedding
+
+    except Exception as e:
+        log_func("ERROR", entity_name, f"Failed to get embedding from SiliconFlow: {e}")
+        # 降级方案：返回随机向量作为占位符
+        import numpy as np
+
+        np.random.seed(hash(text) % (2**32))
+        return np.random.rand(1024).tolist()
+
+
+class VectorDBManager:
+    """
+    向量数据库管理器
+    用于存储和检索群聊历史消息
+    """
+
+    def __init__(self, persist_directory: str = str(vector_db_path)):
+        """
+        初始化向量数据库
+
+        Args:
+            persist_directory: 数据库持久化目录
+        """
+        self.client = chromadb.PersistentClient(
+            path=persist_directory,
+            settings=Settings(anonymized_telemetry=False, allow_reset=True),
+        )
+
+        # 为每个群创建独立的collection
+        self.collections = {}
+
+    def get_collection(self, group_id: str):
+        """
+        获取或创建指定群的collection
+
+        Args:
+            group_id: 群组ID
+
+        Returns:
+            ChromaDB collection对象
+        """
+        collection_name = f"group_{group_id}"
+
+        if collection_name not in self.collections:
+            try:
+                self.collections[collection_name] = (
+                    self.client.get_or_create_collection(
+                        name=collection_name, metadata={"group_id": group_id}
+                    )
+                )
+            except Exception as e:
+                log_func("ERROR", entity_name, f"创建collection失败: {e}")
+                raise
+
+        return self.collections[collection_name]
+
+    async def add_messages_batch(self, group_id: str, messages: List[Dict[str, Any]]):
+        """
+        批量添加消息到向量数据库
+        将多条消息合并为一个文档进行向量化存储
+        """
+        if not messages:
+            return
+
+        try:
+            collection = self.get_collection(group_id)
+
+            # 1. 过滤并格式化消息
+            valid_messages = []
+            for msg in messages:
+                content = msg.get("content", "").strip()
+                media_files = msg.get("media_files", [])
+
+                if not content and not media_files:
+                    continue
+
+                user_name = msg.get("user_name", msg.get("name", "unknown"))
+                user_id = str(msg.get("user_id", "unknown"))
+                timestamp = msg.get("timestamp", time.time())
+                time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
+
+                media_info = (
+                    f" [包含 {len(media_files)} 个媒体文件]" if media_files else ""
+                )
+
+                # 格式: [Time] User(ID): Content [Media]
+                formatted_msg = (
+                    f"[{time_str}] {user_name}({user_id}): {content}{media_info}"
+                )
+                valid_messages.append(formatted_msg)
+
+            if not valid_messages:
+                log_func("WARN", entity_name, "批量消息过滤后为空，跳过存储")
+                return
+
+            # 2. 合并为一个整体
+            combined_content = "\n".join(valid_messages)
+
+            # 3. 一次性向量化
+            log_func(
+                "INFO",
+                entity_name,
+                f"正在向量化合并后的消息块 (包含 {len(valid_messages)} 条消息, 长度 {len(combined_content)})",
+            )
+
+            try:
+                embedding = await get_text_embedding(combined_content)
+            except Exception as e:
+                log_func("ERROR", entity_name, f"向量化失败: {e}")
+                return
+
+            # 4. 构造元数据
+            # 使用第一条消息的时间戳作为ID的一部分
+            first_msg = messages[0]
+            timestamp = first_msg.get("timestamp", time.time())
+            batch_id = f"batch_{int(timestamp)}_{len(valid_messages)}"
+
+            metadata = {
+                "user_id": "batch",
+                "user_name": "batch_conversation",
+                "timestamp": timestamp,
+                "message_id": batch_id,
+                "count": len(valid_messages),
+                "info": "merged_history_batch",
+            }
+
+            # 5. 存储
+            collection.add(
+                embeddings=[embedding],
+                documents=[combined_content],
+                metadatas=[metadata],
+                ids=[f"{group_id}_{batch_id}"],
+            )
+
+            log_func("INFO", entity_name, f"成功存储合并消息块: {group_id}_{batch_id}")
+
+        except Exception as e:
+            log_func("ERROR", entity_name, f"批量添加消息到向量数据库失败: {e}")
+
+    async def add_conversation_batch(self, group_id: str, messages: List[Dict[str, Any]]):
+        """
+        批量添加主对话历史到向量数据库（包含AI和用户的对话）
+        将多条对话消息合并为一个JSON文档进行向量化存储
+        
+        Args:
+            group_id: 群组ID
+            messages: 消息列表，每条消息需包含：role, content, timestamp, user_id(可选), user_name(可选)等
+        """
+        if not messages:
+            return
+
+        try:
+            collection = self.get_collection(group_id)
+
+            # 1. 按时间排序并保留完整的消息结构
+            sorted_messages = sorted(messages, key=lambda x: x.get("timestamp", 0))
+            
+            # 2. 构建结构化的对话数据
+            structured_conversation = []
+            for msg in sorted_messages:
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "").strip()
+                timestamp = msg.get("timestamp", time.time())
+                
+                if not content:
+                    continue
+                
+                # 保留完整结构，包括用户信息
+                message_obj = {
+                    "role": role,
+                    "content": content,
+                    "timestamp": timestamp,
+                    "time_str": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
+                }
+                
+                # 保留用户ID和昵称（如果有）
+                if "user_id" in msg:
+                    message_obj["user_id"] = msg["user_id"]
+                if "user_name" in msg:
+                    message_obj["user_name"] = msg["user_name"]
+                if "user_sex" in msg:
+                    message_obj["user_sex"] = msg["user_sex"]
+                if "message_id" in msg:
+                    message_obj["message_id"] = msg["message_id"]
+                
+                # 保留媒体文件信息（如果有）
+                if "media_files" in msg and msg["media_files"]:
+                    message_obj["media_files"] = msg["media_files"]
+                
+                structured_conversation.append(message_obj)
+
+            if not structured_conversation:
+                log_func("WARN", entity_name, "对话批量消息过滤后为空，跳过存储")
+                return
+
+            # 3. 将结构化数据转换为JSON字符串（用于存储）
+            conversation_json = json.dumps(structured_conversation, ensure_ascii=False, indent=2)
+            
+            # 4. 生成用于向量化的文本表示（用于语义检索）
+            text_parts = []
+            for msg in structured_conversation:
+                role_name = "AI" if msg['role'] == 'assistant' else msg.get('user_name', 'User')
+                user_info = f"({msg.get('user_id', '')})" if msg.get('user_id') else ""
+                text_parts.append(f"[{msg['time_str']}] {role_name}{user_info}: {msg['content'][:200]}")
+            
+            text_for_embedding = "\n".join(text_parts)
+
+            # 5. 一次性向量化
+            log_func(
+                "INFO",
+                entity_name,
+                f"正在向量化对话历史块 (包含 {len(structured_conversation)} 条对话, JSON长度 {len(conversation_json)})",
+            )
+
+            try:
+                embedding = await get_text_embedding(text_for_embedding)
+            except Exception as e:
+                log_func("ERROR", entity_name, f"对话向量化失败: {e}")
+                return
+
+            # 6. 构造元数据
+            first_msg = structured_conversation[0]
+            last_msg = structured_conversation[-1]
+            timestamp_start = first_msg["timestamp"]
+            timestamp_end = last_msg["timestamp"]
+            batch_id = f"conversation_{int(timestamp_start)}_{int(timestamp_end)}_{len(structured_conversation)}"
+
+            metadata = {
+                "user_id": "conversation",
+                "user_name": "ai_user_conversation",
+                "timestamp": timestamp_start,
+                "timestamp_end": timestamp_end,
+                "message_id": batch_id,
+                "count": len(structured_conversation),
+                "info": "merged_conversation_history"
+            }
+
+            # 7. 存储（documents字段存储完整的JSON，用于检索后恢复结构）
+            collection.add(
+                embeddings=[embedding],
+                documents=[conversation_json],  # 存储JSON格式的完整数据
+                metadatas=[metadata],
+                ids=[f"{group_id}_{batch_id}"],
+            )
+
+            log_func("INFO", entity_name, f"成功存储对话历史块: {group_id}_{batch_id}")
+
+        except Exception as e:
+            log_func("ERROR", entity_name, f"批量添加对话历史到向量数据库失败: {e}")
+
+    async def search_similar_messages(
+        self, group_id: str, query: str, top_k: int = 5
+    ) -> List[Dict[str, Any]]:
+        """
+        检索相似的历史消息
+
+        Args:
+            group_id: 群组ID
+            query: 查询文本
+            top_k: 返回最相似的k条消息
+
+        Returns:
+            相似消息列表，每条消息包含content、metadata等信息
+        """
+        try:
+            collection = self.get_collection(group_id)
+
+            # 生成查询embedding
+            query_embedding = await get_text_embedding(query)
+
+            # 检索相似消息
+            results = collection.query(
+                query_embeddings=[query_embedding],
+                n_results=top_k,
+                include=["documents", "metadatas", "distances"],
+            )
+
+            log_func(
+                "INFO", entity_name, f"检索到 {len(results['documents'][0])} 条相似消息"
+            )
+            log_func("DEBUG", entity_name, f"检索结果详情: {results}")
+
+            # 格式化返回结果
+            similar_messages = []
+            if results and results["documents"] and len(results["documents"]) > 0:
+                for i in range(len(results["documents"][0])):
+                    similar_messages.append(
+                        {
+                            "content": results["documents"][0][i],
+                            "user_name": results["metadatas"][0][i].get(
+                                "user_name", "unknown"
+                            ),
+                            "user_id": results["metadatas"][0][i].get(
+                                "user_id", "unknown"
+                            ),
+                            "timestamp": results["metadatas"][0][i].get("timestamp", 0),
+                            "distance": (
+                                results["distances"][0][i]
+                                if "distances" in results
+                                else 0
+                            ),
+                        }
+                    )
+
+            return similar_messages
+
+        except Exception as e:
+            log_func("ERROR", entity_name, f"检索相似消息失败: {e}")
+            return []
 
 
 class ContextManager:
@@ -92,14 +477,71 @@ class ContextManager:
         self.group_context = {}
         self.private_context = {}
 
+    async def trim_main_context(self, group_id: str):
+        """
+        检查并裁剪主对话上下文，将超出长度的旧消息向量化后移除
+        
+        Args:
+            group_id: 群组ID
+        """
+        group_context = self.group_context.get(str(group_id))
+        if not group_context:
+            return
+        
+        main_context = group_context["context"].context
+        
+        # 检查是否超过长度限制
+        if len(main_context) > MAIN_CONTEXT_MAX_LENGTH:
+            # 计算需要移除的消息数量（移除1/3，保持性能）
+            trim_count = len(main_context) - MAIN_CONTEXT_MAX_LENGTH + (MAIN_CONTEXT_MAX_LENGTH // 3)
+            
+            # 获取要向量化的旧消息
+            messages_to_vectorize = main_context[:trim_count]
+            
+            log_func(
+                "INFO",
+                entity_name,
+                f"主对话上下文超过限制 ({len(main_context)} > {MAIN_CONTEXT_MAX_LENGTH})，准备向量化 {trim_count} 条旧消息",
+            )
+            
+            # 向量化旧消息
+            if Plugin.vector_db_manager and messages_to_vectorize:
+                try:
+                    await Plugin.vector_db_manager.add_conversation_batch(
+                        str(group_id), messages_to_vectorize
+                    )
+                except Exception as e:
+                    log_func("ERROR", entity_name, f"向量化旧对话失败: {e}")
+            
+            # 移除已向量化的消息
+            group_context["context"].context = main_context[trim_count:]
+            
+            log_func(
+                "INFO",
+                entity_name,
+                f"已裁剪主对话上下文，当前长度: {len(group_context['context'].context)}",
+            )
+
     def get_group_context(self, group_id):
         if str(group_id) not in self.group_context:
+            stream_ctx = message_codec_package["context"].StreamContextManager(
+                context=[],
+                max_length=STREAM_CONTEXT_MAX_LENGTH,
+            )
+
+            # 设置向量化回调函数
+            async def vectorize_batch(gid, messages):
+                """批量向量化回调函数"""
+                if Plugin.vector_db_manager:
+                    await Plugin.vector_db_manager.add_messages_batch(
+                        str(gid), messages
+                    )
+
+            stream_ctx.set_vectorize_callback(vectorize_batch, str(group_id))
+
             self.group_context[str(group_id)] = {
                 "context": message_codec_package["context"].ContextManager(context=[]),
-                "stream_context": message_codec_package["context"].StreamContextManager(
-                    context=[],
-                    max_length=50,  # 您可以按需调整此值
-                ),
+                "stream_context": stream_ctx,
                 "ai_params": {
                     "system_instruction": get_default_system_instruction(),
                     "trigger": ["Alice"],
@@ -119,6 +561,69 @@ class ContextManager:
                 },
             }
         return self.private_context[str(user_id)]
+
+    def remove_recent_messages(self, group_id, count: int = 1):
+        """
+        从群聊上下文中移除最近的N条消息
+
+        Args:
+            group_id: 群组ID
+            count: 要移除的消息数量，默认为1
+
+        Returns:
+            被移除的消息列表
+        """
+        group_context = self.get_group_context(group_id)
+        removed_messages = []
+
+        # 从核心上下文中移除消息
+        context_manager = group_context["context"]
+        for _ in range(count):
+            if context_manager.context:
+                removed_msg = context_manager.context.pop()
+                removed_messages.append(removed_msg)
+                log_func(
+                    "INFO",
+                    entity_name,
+                    f"从群 {group_id} 的核心上下文中移除了消息: {removed_msg.get('role', 'unknown')}",
+                )
+
+        return removed_messages
+
+    def remove_messages_by_content_pattern(
+        self, group_id, pattern: str, max_count: int = 5
+    ):
+        """
+        根据内容模式从群聊上下文中移除消息
+
+        Args:
+            group_id: 群组ID
+            pattern: 要匹配的内容模式（子串）
+            max_count: 最多移除的消息数量
+
+        Returns:
+            被移除的消息数量
+        """
+        group_context = self.get_group_context(group_id)
+        context_manager = group_context["context"]
+
+        removed_count = 0
+        messages_to_keep = []
+
+        for msg in context_manager.context:
+            content = msg.get("content", "")
+            if removed_count < max_count and pattern in content:
+                removed_count += 1
+                log_func(
+                    "INFO",
+                    entity_name,
+                    f"移除包含模式 '{pattern}' 的消息: {content[:100]}...",
+                )
+            else:
+                messages_to_keep.append(msg)
+
+        context_manager.context = messages_to_keep
+        return removed_count
 
     def write_to_temporary_file(self):
         with open(context_temp_file, "w", encoding="utf-8") as f:
@@ -189,7 +694,9 @@ class ContextManager:
                             upgraded_main_context.append(msg)
 
                         upgraded_stream_context = []
-                        stream_context_data = v.get("stream_context", ([], 50))
+                        stream_context_data = v.get(
+                            "stream_context", ([], STREAM_CONTEXT_MAX_LENGTH)
+                        )
                         for msg in stream_context_data[0]:
                             if "timestamp" not in msg:
                                 if "time" in msg and isinstance(msg["time"], str):
@@ -203,16 +710,29 @@ class ContextManager:
                                     msg["timestamp"] = time.time() - 99999
                             upgraded_stream_context.append(msg)
 
+                        # 创建StreamContextManager并设置向量化回调
+                        stream_ctx = message_codec_package[
+                            "context"
+                        ].StreamContextManager(
+                            context=upgraded_stream_context,
+                            max_length=stream_context_data[1],
+                        )
+
+                        # 设置向量化回调函数
+                        async def vectorize_batch(gid, messages):
+                            """批量向量化回调函数"""
+                            if Plugin.vector_db_manager:
+                                await Plugin.vector_db_manager.add_messages_batch(
+                                    str(gid), messages
+                                )
+
+                        stream_ctx.set_vectorize_callback(vectorize_batch, str(k))
+
                         temp_group_context[str(k)] = {
                             "context": message_codec_package["context"].ContextManager(
                                 context=upgraded_main_context
                             ),
-                            "stream_context": message_codec_package[
-                                "context"
-                            ].StreamContextManager(
-                                context=upgraded_stream_context,
-                                max_length=stream_context_data[1],
-                            ),
+                            "stream_context": stream_ctx,
                             "ai_params": v["ai_params"],
                         }
 
@@ -275,7 +795,9 @@ class ContextManager:
                 upgraded_main_context.append(msg)
 
             upgraded_stream_context = []
-            stream_context_data = v.get("stream_context", ([], 50))
+            stream_context_data = v.get(
+                "stream_context", ([], STREAM_CONTEXT_MAX_LENGTH)
+            )
             for msg in stream_context_data[0]:
                 if "timestamp" not in msg:
                     if "time" in msg and isinstance(msg["time"], str):
@@ -287,14 +809,27 @@ class ContextManager:
                         msg["timestamp"] = time.time() - 99999
                 upgraded_stream_context.append(msg)
 
+            # 创建StreamContextManager并设置向量化回调
+            stream_ctx = message_codec_package["context"].StreamContextManager(
+                context=upgraded_stream_context,
+                max_length=stream_context_data[1],
+            )
+
+            # 设置向量化回调函数
+            async def vectorize_batch(gid, messages):
+                """批量向量化回调函数"""
+                if Plugin.vector_db_manager:
+                    await Plugin.vector_db_manager.add_messages_batch(
+                        str(gid), messages
+                    )
+
+            stream_ctx.set_vectorize_callback(vectorize_batch, str(k))
+
             self.group_context[str(k)] = {
                 "context": message_codec_package["context"].ContextManager(
                     context=upgraded_main_context
                 ),
-                "stream_context": message_codec_package["context"].StreamContextManager(
-                    context=upgraded_stream_context,
-                    max_length=stream_context_data[1],
-                ),
+                "stream_context": stream_ctx,
                 "ai_params": v["ai_params"],
             }
 
@@ -465,7 +1000,51 @@ class ContextManager:
 
             final_context_for_ai.append(context_item)
 
-        # --- 步骤 3: 添加当前用户的最终请求 ---
+        # --- 步骤 3: 向量检索增强 (RAG) ---
+        # 使用向量数据库检索相关的历史消息
+        if Plugin.vector_db_manager and group_id:
+            try:
+                # 使用当前用户请求作为查询
+                similar_messages = (
+                    await Plugin.vector_db_manager.search_similar_messages(
+                        str(group_id), user_request, top_k=5
+                    )
+                )
+
+                if similar_messages:
+                    # 构建检索到的相关历史消息文本
+                    retrieval_context = "--- 相关历史消息 (Retrieved Context) ---\n"
+                    retrieval_context += "以下是与当前对话相关的历史消息片段:\n\n"
+
+                    for idx, msg in enumerate(similar_messages, 1):
+                        msg_time = time.strftime(
+                            "%Y-%m-%d %H:%M:%S", time.localtime(msg["timestamp"])
+                        )
+                        retrieval_context += f"{idx}. [{msg_time}] {msg['user_name']}: {msg['content']}\n"
+
+                    retrieval_context += "\n--- 相关历史消息结束 ---\n\n"
+
+                    log_func(
+                        "INFO",
+                        entity_name,
+                        f"Retrieved {len(similar_messages)} similar messages for context enhancement",
+                    )
+                else:
+                    retrieval_context = ""
+            except Exception as e:
+                log_func(
+                    "ERROR", entity_name, f"Failed to retrieve similar messages: {e}"
+                )
+                retrieval_context = ""
+        else:
+            log_func(
+                "INFO",
+                entity_name,
+                "Vector DB manager or group_id not available, skipping retrieval context",
+            )
+            retrieval_context = ""
+
+        # --- 步骤 4: 添加当前用户的最终请求 ---
         # 这必须是列表中的最后一条消息。
         user_info = await api.get_stranger_info(user_id)
         user_sex = user_info.get("sex", "unknown")
@@ -490,6 +1069,7 @@ class ContextManager:
             f"## Time: {time.asctime()}\n"
             f"## User Sex: {user_sex}\n"
             f"## User Message ID: `[CQ:reply,id={user_message_id}]`\n"
+            f"{retrieval_context}"  # 在用户消息前添加检索到的相关历史消息
             f"## User Message:\n{user_request}\n"
         )
 
@@ -1576,12 +2156,30 @@ async def handle_agent_output(
 
 class Plugin:
     context_manager = None
+    vector_db_manager = None
     lock = Lock()
-    rate_limiter = plugin_context.RateLimiter(300, 400)
+    rate_limiter = plugin_context.RateLimiter(86400, 29584)
 
     # All static methods (create, help, description, destroy, etc.) remain UNCHANGED.
     @staticmethod
     def create():
+        # 先初始化向量数据库管理器
+        try:
+            Plugin.vector_db_manager = VectorDBManager()
+            log_func(
+                "INFO",
+                entity_name,
+                "Vector database initialized successfully!",
+            )
+        except Exception as e:
+            log_func(
+                "ERROR",
+                entity_name,
+                f"Failed to initialize vector database: {e}",
+            )
+            Plugin.vector_db_manager = None
+
+        # 再加载上下文（这样回调函数中的Plugin.vector_db_manager就已经初始化了）
         Plugin.context_manager = ContextManager()
         try:
             Plugin.context_manager.read_from_temporary_file()
@@ -1658,12 +2256,45 @@ Powered by ✨Gemini-Flash-2.5 via AutoGemini Agent
     @staticmethod
     def after_reload():
         with Plugin.lock:
-            log_func("INFO", entity_name, "Reading context from temporary file...")
+            # Re-initialize Vector DB Manager
+            try:
+                Plugin.vector_db_manager = VectorDBManager()
+                log_func(
+                    "INFO",
+                    entity_name,
+                    "Vector database initialized successfully (reload)!",
+                )
+            except Exception as e:
+                log_func(
+                    "ERROR",
+                    entity_name,
+                    f"Failed to initialize vector database (reload): {e}",
+                )
+                Plugin.vector_db_manager = None
+
+            # Create context manager instance first
             Plugin.context_manager = ContextManager()
-            Plugin.context_manager.read_from_temporary_file()
-            log_func(
-                "INFO", entity_name, "Context read from temporary file successfully."
-            )
+
+            # Then try to load from file
+            log_func("INFO", entity_name, "Reading context from temporary file...")
+            try:
+                Plugin.context_manager.read_from_temporary_file()
+                log_func(
+                    "INFO",
+                    entity_name,
+                    "Context read from temporary file successfully.",
+                )
+            except Exception as e:
+                log_func(
+                    "ERROR",
+                    entity_name,
+                    f"Failed to read context from temporary file: {e}\n{traceback.format_exc()}",
+                )
+                log_func(
+                    "WARN",
+                    entity_name,
+                    "Context manager initialized with empty state.",
+                )
 
     @staticmethod
     def _test_if_being_at(message, bot_qq):
@@ -1722,6 +2353,36 @@ Powered by ✨Gemini-Flash-2.5 via AutoGemini Agent
                         "set_instruction"
                     ][0]
                 await message_sender_func("Set instruction successfully.")
+                raise plugin_context.SkipFollow()
+            if "remove_recent" in command_json:
+                # 移除最近的N条消息
+                count = command_json.get("remove_recent", 1)
+                if isinstance(count, list):
+                    count = count[0] if count else 1
+                removed = Plugin.context_manager.remove_recent_messages(
+                    message["group_id"], count=count
+                )
+                Plugin.context_manager.write_to_temporary_file()
+                await message_sender_func(f"已移除最近的 {len(removed)} 条消息。")
+                raise plugin_context.SkipFollow()
+            if "remove_sensitive" in command_json:
+                # 根据关键词移除包含敏感内容的消息
+                pattern = command_json.get("remove_sensitive", "")
+                if isinstance(pattern, list):
+                    pattern = pattern[0] if pattern else ""
+                if not pattern:
+                    await message_sender_func("请提供要移除的关键词模式。")
+                    raise plugin_context.SkipFollow()
+
+                removed_count = (
+                    Plugin.context_manager.remove_messages_by_content_pattern(
+                        message["group_id"], pattern, max_count=10
+                    )
+                )
+                Plugin.context_manager.write_to_temporary_file()
+                await message_sender_func(
+                    f"已移除 {removed_count} 条包含 '{pattern}' 的消息。"
+                )
                 raise plugin_context.SkipFollow()
         except plugin_context.SkipFollow:
             raise plugin_context.SkipFollow()
@@ -1782,6 +2443,14 @@ Powered by ✨Gemini-Flash-2.5 via AutoGemini Agent
 
         @plugin_context.timeout(600, timeout_callback=timeout_callback)
         async def handler():
+            if Plugin.context_manager is None:
+                log_func(
+                    "WARN",
+                    entity_name,
+                    "Context manager not initialized, skipping message.",
+                )
+                return
+
             group_id = message["group_id"]
             group_context = Plugin.context_manager.get_group_context(group_id)
 
@@ -1943,14 +2612,14 @@ Your own QQ number is [CQ:at,qq={message['self_id']}]
                     + "\n"
                     + group_context["ai_params"]["system_instruction"],
                     respond_tags_description=CUSTOM_TAGS_PROMPT,
-                    model="deepseek-chat",
-                    temperature=1.0,
+                    model="grok-4-1-fast-non-reasoning",
+                    temperature=0.6875,
                     max_tokens=8192,
                     api_delay=5.0,
                     api_type=APIType.OPENAI,
-                    base_url="https://api.deepseek.com",
+                    base_url="https://api.bltcy.ai/v1",
                     presence_penalty=0.0,
-                    enable_multimodal=False,
+                    enable_multimodal=True,
                 )
 
                 # 6. Load the conversation history into the agent.
@@ -1958,7 +2627,9 @@ Your own QQ number is [CQ:at,qq={message['self_id']}]
 
                 # 7. Define a simple callback for debugging the agent's internal steps.
                 async def stream_callback(chunk: Any, msg_type: CallbackMsgType):
-                    log_func("DEBUG", f"Agent-{msg_type.name}", str(chunk))
+                    # log_func("DEBUG", f"Agent-{msg_type.name}", str(chunk))
+                    pass
+
                 async def raw_stream_callback(response):
                     log_func("DEBUG", f"Agent-RAW", str(response))
 
@@ -2077,14 +2748,21 @@ Your own QQ number is [CQ:at,qq={message['self_id']}]
                     # 10. Save the complete interaction to context manager.
                     current_time = time.time()
 
-                    # 构造包含媒体文件的用户消息记录
+                    # 获取用户信息用于保存
+                    user_info = await api.get_stranger_info(message["user_id"])
+
+                    # 构造包含完整用户信息的消息记录
                     user_message_record = {
                         "role": "user",
                         "content": real_request_for_history,
                         "timestamp": current_time,
+                        "user_id": message["user_id"],
+                        "user_name": user_info.get("nickname", "unknown"),
+                        "user_sex": user_info.get("sex", "unknown"),
+                        "message_id": message["message_id"],
                     }
 
-                    # 如果有媒体文件，保存媒体信息（为了向前兼容）
+                    # 如果有媒体文件，保存媒体信息
                     if current_media_files:
                         user_message_record["media_files"] = current_media_files
                         log_func(
@@ -2103,13 +2781,54 @@ Your own QQ number is [CQ:at,qq={message['self_id']}]
                             + 0.001,  # <--- ADDED (确保在用户消息之后)
                         }
                     )
+
+                    # 检查并裁剪主对话上下文
+                    await Plugin.context_manager.trim_main_context(group_id)
+
                 except Exception as e:
                     await api.withdraw_message(message_id)
                     error_msg = f"Agent在处理时发生错误: {e}"
                     log_func(
                         "ERROR", entity_name, f"{error_msg}\n{traceback.format_exc()}"
                     )
-                    await api.send_group_message(group_id, error_msg)
+
+                    # 检测是否为敏感词错误
+                    if is_sensitive_word_error(str(e)):
+                        log_func(
+                            "WARN",
+                            entity_name,
+                            "检测到敏感词错误，尝试撤回最近的上下文消息",
+                        )
+
+                        # 撤回最近的2条消息（用户消息和可能的助手消息）
+                        removed = Plugin.context_manager.remove_recent_messages(
+                            group_id, count=2
+                        )
+
+                        if removed:
+                            retry_msg = (
+                                "检测到敏感词，已从对话历史中移除最近的消息。\n"
+                                f"移除了 {len(removed)} 条消息。\n"
+                                "请重新发送您的问题。"
+                            )
+                            await api.send_group_message(group_id, retry_msg)
+
+                            # 保存修改后的上下文
+                            Plugin.context_manager.write_to_temporary_file()
+
+                            log_func(
+                                "INFO",
+                                entity_name,
+                                f"已从群 {group_id} 移除 {len(removed)} 条消息以应对敏感词错误",
+                            )
+                        else:
+                            await api.send_group_message(
+                                group_id,
+                                "检测到敏感词错误，但上下文为空，无法撤回消息。",
+                            )
+                    else:
+                        # 非敏感词错误，显示原始错误消息
+                        await api.send_group_message(group_id, error_msg)
 
                 # --- END AGENT INTEGRATION BLOCK ---
 
@@ -2132,7 +2851,10 @@ Your own QQ number is [CQ:at,qq={message['self_id']}]
                 if stream_media_files:
                     stream_message_record["media_files"] = stream_media_files
 
-                group_context["stream_context"].push_message(stream_message_record)
+                # 流式消息会由StreamContextManager自动批量向量化
+                await group_context["stream_context"].push_message(
+                    stream_message_record
+                )
 
         try:
             await handler()
