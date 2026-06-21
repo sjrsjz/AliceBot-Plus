@@ -10,6 +10,8 @@ import os
 import asyncio
 import aiohttp
 import random
+import shutil
+import gc
 import bs4
 from threading import Lock
 from typing import Callable, Any, List, Optional, Dict
@@ -115,8 +117,8 @@ def get_default_system_instruction():
 
 
 def get_api_key():
-    # return aibackend_package["apikey"].config.key_gemini()
-    return aibackend_package["apikey"].config.key_bolatu()
+    return aibackend_package["apikey"].config.key_deepseek()
+    # return aibackend_package["apikey"].config.key_bolatu()
 
 
 async def get_text_embedding(text: str) -> List[float]:
@@ -184,6 +186,7 @@ class VectorDBManager:
         Args:
             persist_directory: 数据库持久化目录
         """
+        self.persist_directory = pathlib.Path(persist_directory)
         self.client = chromadb.PersistentClient(
             path=persist_directory,
             settings=Settings(anonymized_telemetry=False, allow_reset=True),
@@ -191,6 +194,73 @@ class VectorDBManager:
 
         # 为每个群创建独立的collection
         self.collections = {}
+
+    def delete_group_collection(self, group_id: str) -> bool:
+        """删除指定群的 collection。"""
+        collection_name = f"group_{group_id}"
+        try:
+            self.client.delete_collection(collection_name)
+        except Exception:
+            # collection 不存在等情况，视为未删除
+            self.collections.pop(collection_name, None)
+            return False
+        self.collections.pop(collection_name, None)
+        return True
+
+    def reset_all(self, purge_files: bool = True) -> Dict[str, Any]:
+        """清空整个向量数据库。
+
+        - 默认会调用 Chroma 的 reset
+        - 可选进一步清理持久化目录下的落盘文件（更彻底，Windows 下可能会因占用而部分失败）
+        """
+        result: Dict[str, Any] = {
+            "client_reset": False,
+            "purge_files": purge_files,
+            "purged_dirs": 0,
+            "purged_files": 0,
+            "purge_errors": [],
+        }
+
+        try:
+            if hasattr(self.client, "reset"):
+                self.client.reset()
+                result["client_reset"] = True
+        except Exception as e:
+            result["purge_errors"].append(f"client.reset failed: {e}")
+
+        self.collections.clear()
+
+        if not purge_files:
+            return result
+
+        persist_dir = self.persist_directory
+        try:
+            persist_dir = persist_dir.resolve()
+        except Exception:
+            pass
+
+        # 安全护栏：避免误删过大范围目录
+        if persist_dir.name.lower() != "vector_db":
+            result["purge_errors"].append(
+                f"Refuse to purge unexpected directory: {persist_dir}"
+            )
+            return result
+
+        if not persist_dir.exists():
+            return result
+
+        for child in persist_dir.iterdir():
+            try:
+                if child.is_dir():
+                    shutil.rmtree(child, ignore_errors=False)
+                    result["purged_dirs"] += 1
+                else:
+                    child.unlink()
+                    result["purged_files"] += 1
+            except Exception as e:
+                result["purge_errors"].append(f"Failed to remove {child}: {e}")
+
+        return result
 
     def get_collection(self, group_id: str):
         """
@@ -1002,6 +1072,7 @@ class ContextManager:
 
         # --- 步骤 3: 向量检索增强 (RAG) ---
         # 使用向量数据库检索相关的历史消息
+        current_user_message_content = ""
         if Plugin.vector_db_manager and group_id:
             try:
                 # 使用当前用户请求作为查询
@@ -1013,36 +1084,30 @@ class ContextManager:
 
                 if similar_messages:
                     # 构建检索到的相关历史消息文本
-                    retrieval_context = "--- 相关历史消息 (Retrieved Context) ---\n"
-                    retrieval_context += "以下是与当前对话相关的历史消息片段:\n\n"
+                    current_user_message_content += "<reactAgentSegmentHeader>RAG_retrieval</reactAgentSegmentHeader>\n"
+                    current_user_message_content += "<RAG_retrieval_start>\n"
 
                     for idx, msg in enumerate(similar_messages, 1):
                         msg_time = time.strftime(
                             "%Y-%m-%d %H:%M:%S", time.localtime(msg["timestamp"])
                         )
-                        retrieval_context += f"{idx}. [{msg_time}] {msg['user_name']}: {msg['content']}\n"
-
-                    retrieval_context += "\n--- 相关历史消息结束 ---\n\n"
-
+                        current_user_message_content += f"{idx}. [{msg_time}] {msg['user_name']}: {msg['content']}\n"
+                    current_user_message_content += "<RAG_retrieval_end>\n"
                     log_func(
                         "INFO",
                         entity_name,
                         f"Retrieved {len(similar_messages)} similar messages for context enhancement",
                     )
-                else:
-                    retrieval_context = ""
             except Exception as e:
                 log_func(
                     "ERROR", entity_name, f"Failed to retrieve similar messages: {e}"
                 )
-                retrieval_context = ""
         else:
             log_func(
                 "INFO",
                 entity_name,
                 "Vector DB manager or group_id not available, skipping retrieval context",
             )
-            retrieval_context = ""
 
         # --- 步骤 4: 添加当前用户的最终请求 ---
         # 这必须是列表中的最后一条消息。
@@ -1050,34 +1115,21 @@ class ContextManager:
         user_sex = user_info.get("sex", "unknown")
         user_name = user_info.get("nickname", "unknown")
 
-        # 用于存储到历史记录的完整请求头（保留了所有细节）
-        real_request_for_history = (
+        current_user_message_content += (
+            f"<reactAgentSegmentHeader>current_user_info</reactAgentSegmentHeader>\n"
             f"## Name: {user_name} (use `[CQ:at,qq={user_id}]` to mention)\n"
             f"## Time: {time.asctime()}\n"
             f"## User Sex: {user_sex}\n"
             f"## User Message ID: `[CQ:reply,id={user_message_id}]`\n"
-            f"## User Message:\n{user_request}\n"
-        )
-
-        # 传递给模型的当前用户提示（更简洁，突出重点）
-        current_user_profile = await self.get_profile(user_id)
-        current_user_message_content = (
-            f"# Current User (Talking to A.I.(you) now):\n"
-            f"## Name: {user_name} (use `[CQ:at,qq={user_id}]` to mention)\n"
-            f"---(User Profile Start)---\n{current_user_profile}"
-            f"---(User Profile End)---\n"
-            f"## Time: {time.asctime()}\n"
-            f"## User Sex: {user_sex}\n"
-            f"## User Message ID: `[CQ:reply,id={user_message_id}]`\n"
-            f"{retrieval_context}"  # 在用户消息前添加检索到的相关历史消息
-            f"## User Message:\n{user_request}\n"
+            f"<reactAgentSegmentHeader>current_user_message</reactAgentSegmentHeader>\n"
+            f"{user_request}"
         )
 
         final_context_for_ai.append(
             {"role": "user", "content": current_user_message_content}
         )
 
-        return final_context_for_ai, real_request_for_history
+        return final_context_for_ai, current_user_message_content
 
 
 class Danbooru:
@@ -1368,6 +1420,15 @@ def get_agent_tool_codes() -> List[ToolCodeInfo]:
                 "json_data": "A dictionary representing the JSON data to send in the OneBot v11 API call. Example: {'action': 'send_msg', 'params': {'group_id': 123456, 'message': 'Hello!'}}"
             },
         ),
+        ToolCodeInfo(
+            name="query_rag_database",
+            description="Queries the local RAG (Retrieval-Augmented Generation) vector database to retrieve relevant historical chat messages or conversation records.",
+            detail="Searches the vector database using semantic similarity to find past messages related to your query. Returns the most relevant historical context to help you answer the user's question. The results are formatted as structured conversation/message records.",
+            args={
+                "query": "A natural language search query describing what information you're looking for in past conversations.",
+                "top_k": "The number of results to return (default: 5, range: 1-10). Higher values return more context but may include less relevant results.",
+            },
+        ),
     ]
 
 
@@ -1552,6 +1613,50 @@ async def create_agent_api_handler(group_id: int = None, api=None) -> DefaultApi
                     return (
                         f"[OneBot v11 API Call Error] Failed to execute API call: {e}"
                     )
+            elif method_name == "query_rag_database":
+                query = kwargs.get("query") or (args[0] if args else None)
+                top_k = kwargs.get("top_k", 5)
+
+                if not query:
+                    return "[RAG Query Error] 'query' is a required argument."
+
+                if not Plugin.vector_db_manager:
+                    return "[RAG Query Error] Vector database is not available."
+
+                if not group_id:
+                    return "[RAG Query Error] This tool can only be used in group chats."
+
+                try:
+                    top_k = int(top_k)
+                    top_k = max(1, min(10, top_k))
+                except (ValueError, TypeError):
+                    top_k = 5
+
+                try:
+                    results = await Plugin.vector_db_manager.search_similar_messages(
+                        str(group_id), query, top_k=top_k
+                    )
+
+                    if not results:
+                        return "No relevant historical messages found in the RAG database."
+
+                    formatted = []
+                    for i, msg in enumerate(results, 1):
+                        msg_time = time.strftime(
+                            "%Y-%m-%d %H:%M:%S", time.localtime(msg["timestamp"])
+                        )
+                        formatted.append(
+                            f"{i}. [{msg_time}] {msg['user_name']}: {msg['content']}"
+                        )
+
+                    return "\n\n".join(formatted)
+                except Exception as e:
+                    log_func(
+                        "ERROR",
+                        entity_name,
+                        f"Error querying RAG database: {e}",
+                    )
+                    return f"[RAG Query Error] Failed to query database: {e}"
             else:
                 return f"[Error] Unknown tool called: {method_name}"
         except Exception as e:
@@ -2217,6 +2322,14 @@ Commands:
 - `#context --load_all`: Load all context from temporary file.
 - `#sudo --set_trigger trigger1 trigger2 ... `: Set trigger for AI.
 - `#sudo --set_instruction "system instruction"`: Set instruction for AI. Empty to reset to default.
+- `#sudo --set_model "model_name"`: Set model for AI. Empty to reset to default.
+- `#sudo --vector_db_clear [soft|purge]`: Clear vector database. Default is `purge`.
+- `#sudo --vector_db_clear_group [group_id]`: Clear vector database collection for current group (or specified group_id).
+
+Examples:
+- `#sudo --vector_db_clear` (默认 purge，会尝试删除 `vector_db` 落盘文件并重建)
+- `#sudo --vector_db_clear soft` (只 reset，不删除落盘文件)
+- `#sudo --vector_db_clear_group` (清空当前群的 collection)
 """.strip()
 
     @staticmethod
@@ -2225,7 +2338,6 @@ Commands:
 AI Chat Plugin
 ================
 This plugin is used to chat with AI.
-Powered by ✨Gemini-Flash-2.5 via AutoGemini Agent
 """.strip()
 
     @staticmethod
@@ -2354,6 +2466,17 @@ Powered by ✨Gemini-Flash-2.5 via AutoGemini Agent
                     ][0]
                 await message_sender_func("Set instruction successfully.")
                 raise plugin_context.SkipFollow()
+            if "set_model" in command_json:
+                if command_json["set_model"] == []:
+                    if "model" in group_context["ai_params"]:
+                        del group_context["ai_params"]["model"]
+                    await message_sender_func("Reset model to default successfully.")
+                else:
+                    group_context["ai_params"]["model"] = command_json["set_model"][0]
+                    await message_sender_func(
+                        f"Set model to {group_context['ai_params']['model']} successfully."
+                    )
+                raise plugin_context.SkipFollow()
             if "remove_recent" in command_json:
                 # 移除最近的N条消息
                 count = command_json.get("remove_recent", 1)
@@ -2383,6 +2506,77 @@ Powered by ✨Gemini-Flash-2.5 via AutoGemini Agent
                 await message_sender_func(
                     f"已移除 {removed_count} 条包含 '{pattern}' 的消息。"
                 )
+                raise plugin_context.SkipFollow()
+
+            if "vector_db_clear_group" in command_json:
+                if not Plugin.vector_db_manager:
+                    await message_sender_func("向量数据库未启用，无法清理。")
+                    raise plugin_context.SkipFollow()
+
+                args = command_json.get("vector_db_clear_group", [])
+                if isinstance(args, list) and args:
+                    target_group_id = str(args[0])
+                else:
+                    target_group_id = str(message.get("group_id", ""))
+
+                if not target_group_id:
+                    await message_sender_func("未能识别 group_id，请传入参数。")
+                    raise plugin_context.SkipFollow()
+
+                deleted = Plugin.vector_db_manager.delete_group_collection(
+                    target_group_id
+                )
+                if deleted:
+                    await message_sender_func(
+                        f"已清空群 {target_group_id} 的向量库 collection。"
+                    )
+                else:
+                    await message_sender_func(
+                        f"群 {target_group_id} 的 collection 不存在或清理失败。"
+                    )
+                raise plugin_context.SkipFollow()
+
+            if "vector_db_clear" in command_json:
+                # soft: 仅 reset；purge: reset + 尝试删除持久化目录内容
+                mode = command_json.get("vector_db_clear", [])
+                if isinstance(mode, list) and mode:
+                    mode = str(mode[0]).strip().lower()
+                else:
+                    mode = "purge"
+                purge_files = mode != "soft"
+
+                await message_sender_func(f"开始清空向量数据库（mode={mode}）...")
+
+                # 尽量释放旧 client 占用，减少 Windows 文件锁问题
+                old_manager = Plugin.vector_db_manager
+                Plugin.vector_db_manager = None
+                try:
+                    del old_manager
+                except Exception:
+                    pass
+                gc.collect()
+
+                def clear_in_thread():
+                    gc.collect()
+                    mgr = VectorDBManager()
+                    return mgr.reset_all(purge_files=purge_files)
+
+                result = await asyncio.to_thread(clear_in_thread)
+                Plugin.vector_db_manager = VectorDBManager()
+
+                msg = (
+                    "向量数据库清空完成。\n"
+                    f"- client_reset: {result.get('client_reset')}\n"
+                    f"- purged_dirs: {result.get('purged_dirs')}\n"
+                    f"- purged_files: {result.get('purged_files')}\n"
+                )
+                if result.get("purge_errors"):
+                    # 只回传前几条，避免刷屏
+                    errors = result["purge_errors"][:5]
+                    msg += "- purge_errors(前5条):\n" + "\n".join(
+                        f"  - {e}" for e in errors
+                    )
+                await message_sender_func(msg)
                 raise plugin_context.SkipFollow()
         except plugin_context.SkipFollow:
             raise plugin_context.SkipFollow()
@@ -2433,7 +2627,6 @@ Powered by ✨Gemini-Flash-2.5 via AutoGemini Agent
             raise Exception("#sudo command is invalid: " + command)
         raise plugin_context.SkipFollow()
 
-    # --- CORE LOGIC: on_group_message is completely refactored ---
     @staticmethod
     async def on_group_message(ws, message):
         api = onebot_package["api"].OneBotAPI(ws, plugin_context.echo_pool)
@@ -2601,6 +2794,7 @@ Powered by ✨Gemini-Flash-2.5 via AutoGemini Agent
 This context is crucial for understanding the conversation and providing relevant responses.
 
 Your own QQ number is [CQ:at,qq={message['self_id']}]
+The group ID is {group_id}
 """
 
                 # 5. Create a new agent processor for this specific request.
@@ -2612,14 +2806,15 @@ Your own QQ number is [CQ:at,qq={message['self_id']}]
                     + "\n"
                     + group_context["ai_params"]["system_instruction"],
                     respond_tags_description=CUSTOM_TAGS_PROMPT,
-                    model="grok-4-1-fast-non-reasoning",
-                    temperature=0.6875,
+                    model=group_context["ai_params"].get("model", "deepseek-v4-flash"),
+                    temperature=1.0,
                     max_tokens=8192,
                     api_delay=5.0,
                     api_type=APIType.OPENAI,
-                    base_url="https://api.bltcy.ai/v1",
-                    presence_penalty=0.0,
-                    enable_multimodal=True,
+                    # base_url="https://api.bltcy.ai/v1",
+                    base_url="https://api.deepseek.com",
+		    # presence_penalty=0.0,
+                    enable_multimodal=False,
                 )
 
                 # 6. Load the conversation history into the agent.
@@ -2627,7 +2822,7 @@ Your own QQ number is [CQ:at,qq={message['self_id']}]
 
                 # 7. Define a simple callback for debugging the agent's internal steps.
                 async def stream_callback(chunk: Any, msg_type: CallbackMsgType):
-                    # log_func("DEBUG", f"Agent-{msg_type.name}", str(chunk))
+                    log_func("DEBUG", f"Agent-{msg_type.name}", str(chunk))
                     pass
 
                 async def raw_stream_callback(response):

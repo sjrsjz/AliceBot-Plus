@@ -40,7 +40,7 @@ entity_name = "Tools"
 tools_help = r"""
 快速工具
 - mdr <markdown>: 渲染 markdown 为图片。
-- typst <typst>: 渲染 typst 为图片。
+- /typst <typst>: 渲染 typst 为图片。
 - $ <mutica>: 执行 Mutica 代码。
 - test-gen-image-size <style> <size> <prompt>: 测试图片生成（支持 nano-banana-2）。
 """
@@ -135,7 +135,7 @@ class Plugin:
                 )
                 raise plugin_context.SkipFollow()
 
-            typst_trigger = "typst "
+            typst_trigger = "/typst "
             if encoded_message.startswith(typst_trigger):
                 typst = encoded_message[len(typst_trigger) :]
                 try:
